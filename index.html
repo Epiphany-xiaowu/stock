@@ -89,7 +89,7 @@
   <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
     <label style="margin:0;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sub)">
       <input type="checkbox" id="autochk" style="width:auto" onchange="toggleAuto()">
-      盘中每30秒自动刷新
+      盘中每5秒自动刷新
     </label>
     <span class="hint" id="auto-cd"></span>
   </div>
@@ -434,12 +434,12 @@ function toggleAuto(){
   if(autoCd){clearInterval(autoCd);autoCd=null;}
   if(on){
     localStorage.setItem('autoref','1');
-    let left=30;
+    let left=5;
     autoCd=setInterval(()=>{
-      left--; if(left<0)left=30;
+      left--; if(left<0)left=5;
       document.getElementById('auto-cd').textContent = inTradingHours()?`${left}秒后刷新`:'非交易时段,暂停';
     },1000);
-    autoTimer=setInterval(()=>{ if(inTradingHours()){ left=30; refresh(); } },30000);
+    autoTimer=setInterval(()=>{ if(inTradingHours()){ left=5; refresh(); } },5000);
     if(inTradingHours()) refresh();
   }else{
     localStorage.removeItem('autoref');
