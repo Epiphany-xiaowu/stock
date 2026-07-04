@@ -95,6 +95,7 @@
   </div>
   <div class="tabs">
     <div class="tab on" data-tab="mon" onclick="switchTab('mon')">持仓监控</div>
+    <div class="tab" data-tab="pick" onclick="switchTab('pick')">明日选股</div>
     <div class="tab" data-tab="mng" onclick="switchTab('mng')">交易记录</div>
   </div>
 </header>
@@ -112,6 +113,11 @@
     <div class="ts" id="mon-ts"></div>
   </div>
   <!-- 管理页 -->
+  <!-- 明日选股页 -->
+  <div id="tab-pick" style="display:none">
+    <div id="pick-body"><div class="empty">点下方"算明日选股"获取收盘后候选</div></div>
+    <div class="ts" id="pick-ts"></div>
+  </div>
   <div id="tab-mng" style="display:none">
     <div id="mng-body"></div>
     <button class="btn gray" onclick="exportData()">⬇️ 导出备份</button>
@@ -128,6 +134,9 @@
 
 <div class="fab" id="fab-mon">
   <button class="btn" onclick="refresh()">🔄 刷新行情 / 看今日信号</button>
+</div>
+<div class="fab" id="fab-pick" style="display:none">
+  <button class="btn" onclick="pickStocks()">📊 算明日选股</button>
 </div>
 <div class="fab" id="fab-mng" style="display:none">
   <button class="btn" onclick="openAdd()">➕ 记一笔买入</button>
@@ -447,12 +456,91 @@ function toggleAuto(){
   }
 }
 
+// ============ 明日选股(东财涨停池,前端直算) ============
+function isMainboard(c){
+  c=String(c).padStart(6,'0');
+  if(c.startsWith('688')) return false;
+  if(c.startsWith('300')||c.startsWith('301')) return false;
+  if(c.startsWith('8')||c.startsWith('4')||c.startsWith('9')) return false;
+  return c.startsWith('60')||c.startsWith('00');
+}
+function fmtFbt(n){ const s=String(n).padStart(6,'0'); return s.slice(0,2)+':'+s.slice(2,4); }
+async function fetchZTPool(ymd){
+  const url=`https://push2ex.eastmoney.com/getTopicZTPool?ut=7eea3edcaed734bea9cbfc24409ed989&dpt=wz.ztzt&Pageindex=0&pagesize=800&sort=fbt%3Aasc&date=${ymd}&_=${Date.now()}`;
+  const resp=await fetch(url); const d=await resp.json();
+  return (d && d.data && d.data.pool) ? d.data.pool : [];
+}
+async function recentZTDate(){
+  const now=new Date();
+  for(let back=0;back<8;back++){
+    const dt=new Date(now); dt.setDate(now.getDate()-back);
+    const w=dt.getDay(); if(w===0||w===6) continue;
+    const ymd=`${dt.getFullYear()}${String(dt.getMonth()+1).padStart(2,'0')}${String(dt.getDate()).padStart(2,'0')}`;
+    try{ const pool=await fetchZTPool(ymd); if(pool.length>0) return {ymd,pool}; }catch(e){}
+  }
+  return {ymd:null,pool:[]};
+}
+async function pickStocks(){
+  document.getElementById('pick-body').innerHTML='<div class="empty">加载中…(拉涨停池)</div>';
+  let ymd,pool;
+  try{ ({ymd,pool}=await recentZTDate()); }
+  catch(e){ document.getElementById('pick-body').innerHTML='<div class="empty">涨停池获取失败(可能网络/内网限制,换手机流量试试)</div>'; return; }
+  if(!ymd){ document.getElementById('pick-body').innerHTML='<div class="empty">近一周无涨停数据</div>'; return; }
+  let fb=pool.filter(x=>x.lbc===1 && isMainboard(x.c) && x.ltsz>=100e8);
+  fb.sort((a,b)=>b.ltsz-a.ltsz);
+  const heldBig=new Set(TRADES.filter(t=>t.hold==='是'&&(t.strat||'')==='大市值').map(t=>t.code.slice(-6)));
+  const q=await fetchQuotes(Object.keys(INDEX));
+  let envTxt=Object.keys(INDEX).map(c=>{const x=q[c];return x?`${INDEX[c]} ${x.price.toFixed(0)}(${((x.price/x.prev-1)*100).toFixed(1)}%)`:'';}).filter(Boolean).join(' · ');
+  let html=`<div class="card" style="border-color:#2c313c">
+    <div style="font-size:13px;color:var(--sub);line-height:1.7">
+    📅 涨停日 <b style="color:var(--txt)">${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}</b>(明日买入日基准)<br>
+    📈 ${envTxt||'指数获取失败'}<br>
+    🎯 涨停${pool.length}只 → 主板首板+流通市值≥100亿 <b style="color:var(--txt)">${fb.length}</b>只</div></div>`;
+  if(fb.length===0){ html+='<div class="empty">今日无符合条件的大市值首板</div>';
+    document.getElementById('pick-body').innerHTML=html;
+    document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN'); return; }
+  let topIdx=fb.findIndex(x=>!heldBig.has(String(x.c).padStart(6,'0')));
+  if(topIdx<0) topIdx=0;
+  fb.forEach((x,i)=>{
+    const c=String(x.c).padStart(6,'0');
+    const cir=(x.ltsz/1e8).toFixed(0);
+    const zb=x.zbc||0;
+    const quality = zb===0?'🟢果断':(zb<=2?`🟡${zb}炸`:`🔴${zb}炸`);
+    const held=heldBig.has(c);
+    const isTop=(i===topIdx);
+    const star=isTop?'⭐':(held?'✋':'　');
+    const heldTag=held?'<span style="color:var(--warn);font-size:11px">已持仓</span>':'';
+    html+=`<div class="card" style="${isTop?'border-color:var(--big)':''}">
+      <div class="row1"><div><span style="font-size:13px">${star}</span><span class="nm">${x.n}</span><span class="cd">${c}</span> ${heldTag}</div>
+        <div style="font-size:13px;color:var(--big);font-weight:600">${cir}亿</div></div>
+      <div class="row2"><span>封板 <b>${quality}</b> · 首封${fmtFbt(x.fbt)}</span>
+        <span>${x.hybk||''}</span></div>`;
+    if(isTop){
+      const zt=(x.p/1e3);
+      const hi9=(zt*1.09).toFixed(2);
+      html+=`<div class="act crit" style="margin-top:8px">
+        ⭐明日首选 · 9:20-9:24竞价挂开盘价买2万<br>
+        昨涨停价约${zt.toFixed(2)} · 竞价高开>9%(≈${hi9})则放弃<br>
+        买入后标【大市值】,走10%止损/30天</div>`;
+    }
+    html+='</div>';
+  });
+  html+=`<div class="note">
+    📊 每天买流通市值最大的未持仓主板首板(⭐)。✋=你已持仓(自动顺延)。<br>
+    🟢封板果断(0炸)次日胜率略高;同市值档优先🟢。<br>
+    ⚠️ 三年回测该策略仅+1.2%/笔、胜率32%,强周期(牛市赚熊市亏),小仓位博弈,不构成投资建议。</div>`;
+  document.getElementById('pick-body').innerHTML=html;
+  document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN')+' · 数据源东财涨停池';
+}
+
 // ============ Tab切换 ============
 function switchTab(t){
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
   document.getElementById('tab-mon').style.display = t==='mon'?'block':'none';
+  document.getElementById('tab-pick').style.display = t==='pick'?'block':'none';
   document.getElementById('tab-mng').style.display = t==='mng'?'block':'none';
   document.getElementById('fab-mon').style.display = t==='mon'?'flex':'none';
+  document.getElementById('fab-pick').style.display = t==='pick'?'flex':'none';
   document.getElementById('fab-mng').style.display = t==='mng'?'flex':'none';
   if(t==='mng') renderMng();
 }
