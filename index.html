@@ -480,8 +480,37 @@ async function recentZTDate(){
   }
   return {ymd:null,pool:[]};
 }
+// index kline strength
+async function fetchIndexKline(code){
+  const url=`https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},day,,,80,`;
+  try{ const r=await fetch(url); const d=await r.json(); const node=d.data[code]; const kl=node.day||node.qfqday||[]; return kl.map(x=>parseFloat(x[2])); }catch(e){ return []; }
+}
+function ma(arr,n){ if(arr.length<n) return null; return arr.slice(-n).reduce((a,b)=>a+b,0)/n; }
+async function marketStrength(){
+  const codes=['sh000001','sz399001','sz399006'];
+  let tot=0, mx=0, detail=[];
+  for(const c of codes){
+    const cl=await fetchIndexKline(c);
+    if(cl.length<60){ continue; }
+    const price=cl[cl.length-1], m20=ma(cl,20), m60=ma(cl,60), mom5=price/cl[cl.length-6]-1;
+    let s=0;
+    if(price>m20) s++;
+    if(price>m60) s++;
+    if(m20>m60) s++;
+    if(mom5>0) s++;
+    tot+=s; mx+=4;
+    detail.push(`${INDEX[c]}${s}/4`);
+  }
+  if(mx===0) return null;
+  const pct=tot/mx;
+  let level,color,advice;
+  if(pct>=0.7){ level='🔴进攻'; color='#ff4d4f'; advice='行情强,可积极做'; }
+  else if(pct>=0.4){ level='🟡中性'; color='#ffb020'; advice='震荡,正常做但控仓'; }
+  else { level='🟢防守'; color='#26a65b'; advice='行情弱,谨慎/减量(该策略熊市易亏)'; }
+  return {score:tot,max:mx,pct,level,color,advice,detail:detail.join(' ')};
+}
 async function pickStocks(){
-  document.getElementById('pick-body').innerHTML='<div class="empty">加载中…(拉涨停池)</div>';
+  document.getElementById('pick-body').innerHTML='<div class="empty">加载中…(拉涨停池+算行情强度)</div>';
   let ymd,pool;
   try{ ({ymd,pool}=await recentZTDate()); }
   catch(e){ document.getElementById('pick-body').innerHTML='<div class="empty">涨停池获取失败(可能网络/内网限制,换手机流量试试)</div>'; return; }
@@ -491,7 +520,12 @@ async function pickStocks(){
   const heldBig=new Set(TRADES.filter(t=>t.hold==='是'&&(t.strat||'')==='大市值').map(t=>t.code.slice(-6)));
   const q=await fetchQuotes(Object.keys(INDEX));
   let envTxt=Object.keys(INDEX).map(c=>{const x=q[c];return x?`${INDEX[c]} ${x.price.toFixed(0)}(${((x.price/x.prev-1)*100).toFixed(1)}%)`:'';}).filter(Boolean).join(' · ');
-  let html=`<div class="card" style="border-color:#2c313c">
+  const ms=await marketStrength();
+  let msBanner='';
+  if(ms){
+    msBanner=`<div class="card" style="border-color:${ms.color};margin-bottom:8px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:17px;font-weight:700;color:${ms.color}">${ms.level}</span><span style="font-size:12px;color:var(--sub)">大盘强度 ${ms.score}/${ms.max} (${(ms.pct*100).toFixed(0)}%)</span></div><div style="font-size:12px;color:var(--sub);margin-top:5px">${ms.detail}</div><div style="font-size:12.5px;color:${ms.color};margin-top:5px">👉 ${ms.advice}</div></div>`;
+  }
+  let html=msBanner+`<div class="card" style="border-color:#2c313c">
     <div style="font-size:13px;color:var(--sub);line-height:1.7">
     📅 涨停日 <b style="color:var(--txt)">${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}</b>(明日买入日基准)<br>
     📈 ${envTxt||'指数获取失败'}<br>
