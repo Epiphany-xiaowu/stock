@@ -584,10 +584,15 @@ renderMng();
 // 恢复排序按钮高亮
 document.querySelectorAll('.sortb').forEach(b=>b.classList.toggle('on',b.dataset.sort===SORT));
 // 恢复自动刷新设置
+let autoStarted=false;
 if(localStorage.getItem('autoref')==='1'){
   document.getElementById('autochk').checked=true;
-  toggleAuto();
+  toggleAuto();                 // 交易时段内 toggleAuto 已会拉一次持仓行情
+  autoStarted=inTradingHours(); // 记录是否已由自动刷新触发过 refresh
 }
+// 打开页面即自动出内容:持仓监控 + 明日选股,无需手动点
+if(!autoStarted) refresh();     // 避免与自动刷新重复拉行情
+pickStocks();
 </script>
 </body>
 </html>
