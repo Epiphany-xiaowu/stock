@@ -574,12 +574,16 @@ function ghHeaders(){
   return {'Authorization':'Bearer '+ghToken(),'Accept':'application/vnd.github+json'};
 }
 // 找到本账号里标记过的gist,没有则创建;返回gistId(失败抛错)
+function errHint(status){
+  if(status===403||status===401) return status+' token无效或权限不足。必须用 classic token(ghp_开头)且勾 gist 权限;细粒度token(github_pat_开头)不支持Gist';
+  return String(status);
+}
 async function findOrCreateGist(){
   const meta=loadMeta();
   if(meta.gistId) return meta.gistId;
   // GET 列表找 description 匹配
   const r=await fetch('https://api.github.com/gists?per_page=100',{headers:ghHeaders()});
-  if(!r.ok) throw new Error('列表读取失败 '+r.status);
+  if(!r.ok) throw new Error('列表读取失败 '+errHint(r.status));
   const list=await r.json();
   let g=list.find(x=>x.description===GIST_DESC);
   if(!g){
@@ -587,7 +591,7 @@ async function findOrCreateGist(){
     const body={description:GIST_DESC,public:false,files:{}};
     body.files[GIST_FILE]={content:JSON.stringify({trades:TRADES,updatedAt:(loadMeta().updatedAt||Date.now())},null,1)};
     const cr=await fetch('https://api.github.com/gists',{method:'POST',headers:ghHeaders(),body:JSON.stringify(body)});
-    if(!cr.ok) throw new Error('创建失败 '+cr.status);
+    if(!cr.ok) throw new Error('创建失败 '+errHint(cr.status));
     g=await cr.json();
   }
   meta.gistId=g.id; saveMeta(meta);
@@ -753,8 +757,11 @@ function highWarn(cl){
   const last=cl[cl.length-1];
   const r20=last/cl[cl.length-21]-1;                       // 近20交易日涨幅
   const r60=cl.length>=61? last/cl[cl.length-61]-1 : null; // 近60交易日涨幅
+  // hot=高位(回测明确亏损档,建议避开): 前60翻倍 或 前20>50%
   const hot=(r60!=null&&r60>=1.0)||r20>=0.5;
-  return {r20,r60,hot};
+  // warn=偏高(回测仍小赚但胜率略降,留意不劝退): 前20日30~50%
+  const warn=!hot && r20>=0.3;
+  return {r20,r60,hot,warn};
 }
 // 批量拉候选票K线算高位(分批并发,避免一次几十个请求被限流)
 async function computeHighWarn(fb){
@@ -837,7 +844,10 @@ async function pickStocks(){
       const r20p=(hi.r20*100).toFixed(0), r60p=hi.r60!=null?(hi.r60*100).toFixed(0):'—';
       if(hi.hot){
         hiTag=' <span style="color:var(--crit);font-size:11px;font-weight:600">⚠️高位</span>';
-        hiLine=`<div style="font-size:11px;color:#ff8f8f;margin-top:4px">⚠️ 前期涨幅偏高(20日+${r20p}% / 60日+${r60p}%),追高胜率仅22-27%,谨慎</div>`;
+        hiLine=`<div style="font-size:11px;color:#ff8f8f;margin-top:4px">⚠️ 前期涨幅偏高(20日+${r20p}% / 60日+${r60p}%),追高胜率仅19%、整体亏损档,建议避开</div>`;
+      }else if(hi.warn){
+        hiTag=' <span style="color:var(--warn);font-size:11px;font-weight:600">偏高</span>';
+        hiLine=`<div style="font-size:11px;color:var(--warn);margin-top:4px">前期涨幅偏高(20日+${r20p}% / 60日+${r60p}%),仍可做但胜率略降,留意</div>`;
       }else{
         hiLine=`<div style="font-size:11px;color:var(--sub);margin-top:4px">前期涨幅 20日+${r20p}% / 60日+${r60p}%</div>`;
       }
@@ -861,7 +871,7 @@ async function pickStocks(){
   html+=`<div class="note">
     📊 每天买流通市值最大的未持仓主板首板(⭐)。✋=你已持仓(自动顺延)。<br>
     🟢封板果断(0炸)次日胜率略高;同市值档优先🟢。<br>
-    ⚠️高位=前60日翻倍>100%或前20日暴涨>50%,7432样本胜率仅22-27%(追高妖股重灾区),优先避开。<br>
+    <span style="color:#ff8f8f">⚠️高位</span>=前60翻倍>100%或前20>50%,近一年回测这档均收-3%、胜率19%(亏损档),建议避开;<span style="color:var(--warn)">偏高</span>=前20日30~50%,仍小赚但胜率略降,留意。<br>
     ⚠️ 三年回测该策略仅+1.2%/笔、胜率32%,强周期(牛市赚熊市亏),小仓位博弈,不构成投资建议。</div>`;
   document.getElementById('pick-body').innerHTML=html;
   document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN')+' · 数据源东财涨停池';
