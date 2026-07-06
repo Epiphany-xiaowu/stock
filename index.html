@@ -347,14 +347,12 @@ function renderMon(q){
       const pnlCol = j.pnl===null?'var(--sub)':(j.pnl>=0?'var(--up)':'var(--down)');
       const px = q[t.code]?q[t.code].price.toFixed(2):'—';
       const actTxt = (j.txt||'') + (j.tags&&j.tags.length?'  '+j.tags.join(' '):'');
-      const key=`${t.code}_${t.date}`;
-      html+=`<div class="card" onclick="openEdit('${key}')">
+      html+=`<div class="card" onclick="openEdit('${t.code}_${t.date}')">
         <div class="row1"><div><span class="nm">${t.name}</span><span class="cd">${t.code}</span></div>
           <div class="pnl" style="color:${pnlCol}">${pnlTxt}</div></div>
         <div class="row2"><span>成本 <b>${t.cost}</b> · 现价 <b>${px}</b></span>
           <span>持仓约 <b>${j.td}</b> 天 ${j.stop?`· 止损价<b>${j.stop}</b>`:''}</span></div>
-        <div class="act ${j.cls}">${actTxt}</div>
-        <div style="text-align:right;margin-top:8px"><button class="sellbtn" onclick="event.stopPropagation();openSell('${key}')">💰 卖出了结</button></div></div>`;
+        <div class="act ${j.cls}">${actTxt}</div></div>`;
     }
     html+='</div>';
   }
