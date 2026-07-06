@@ -71,6 +71,9 @@
   .seg.s2 input:checked+span{background:var(--small);border-color:var(--small)}
   .del{color:var(--crit);background:none;border:1px solid rgba(255,77,79,.4);
     padding:6px 12px;border-radius:8px;font-size:12px}
+  .sellbtn{background:rgba(255,77,79,.15);color:#ff8f8f;border:1px solid rgba(255,77,79,.3);
+    padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600}
+  .btn.done{background:rgba(38,166,91,.9)}
   .note{font-size:11px;color:var(--sub);line-height:1.6;margin-top:10px;padding:10px;
     background:var(--card2);border-radius:9px}
   .ts{font-size:11px;color:var(--sub);text-align:center;margin:6px}
@@ -168,8 +171,25 @@
       <label><input type="radio" name="hold" value="持有-不执行"><span>只看不发信号</span></label>
     </div>
     <button class="btn" onclick="saveTrade()" style="margin-top:14px">保存</button>
+    <button class="btn done" id="m-sell" onclick="openSellFromEdit()" style="display:none">💰 卖出了结</button>
     <button class="btn gray" onclick="closeModal()">取消</button>
     <button class="del" id="m-del" onclick="delTrade()" style="display:none;margin-top:8px">删除这条记录</button>
+  </div>
+</div>
+
+<!-- 卖出了结弹窗 -->
+<div class="modal" id="sell-modal">
+  <div class="sheet">
+    <h3 id="s-title">卖出了结</h3>
+    <input type="hidden" id="s-idx">
+    <div id="s-info" class="note" style="margin-top:0"></div>
+    <label>卖出价(元)</label>
+    <input id="s-price" type="number" inputmode="decimal" placeholder="如 15.20" oninput="updateSellPreview()">
+    <label>卖出日期(YYMMDD)</label>
+    <input id="s-date" inputmode="numeric" placeholder="260706">
+    <div id="s-preview" class="note" style="display:none"></div>
+    <button class="btn done" onclick="confirmSell()" style="margin-top:14px">确认卖出了结</button>
+    <button class="btn gray" onclick="closeSellModal()">取消</button>
   </div>
 </div>
 
@@ -327,12 +347,14 @@ function renderMon(q){
       const pnlCol = j.pnl===null?'var(--sub)':(j.pnl>=0?'var(--up)':'var(--down)');
       const px = q[t.code]?q[t.code].price.toFixed(2):'—';
       const actTxt = (j.txt||'') + (j.tags&&j.tags.length?'  '+j.tags.join(' '):'');
-      html+=`<div class="card" onclick="openEdit('${t.code}_${t.date}')">
+      const key=`${t.code}_${t.date}`;
+      html+=`<div class="card" onclick="openEdit('${key}')">
         <div class="row1"><div><span class="nm">${t.name}</span><span class="cd">${t.code}</span></div>
           <div class="pnl" style="color:${pnlCol}">${pnlTxt}</div></div>
         <div class="row2"><span>成本 <b>${t.cost}</b> · 现价 <b>${px}</b></span>
           <span>持仓约 <b>${j.td}</b> 天 ${j.stop?`· 止损价<b>${j.stop}</b>`:''}</span></div>
-        <div class="act ${j.cls}">${actTxt}</div></div>`;
+        <div class="act ${j.cls}">${actTxt}</div>
+        <div style="text-align:right;margin-top:8px"><button class="sellbtn" onclick="event.stopPropagation();openSell('${key}')">💰 卖出了结</button></div></div>`;
     }
     html+='</div>';
   }
@@ -348,9 +370,9 @@ function setSort(m){
 // ============ 渲染管理页 ============
 function renderMng(){
   let html='';
-  const groups={'是':'正常持仓(走策略)','持有-不执行':'只看不发信号','了结':'已了结'};
   const held=TRADES.filter(t=>t.hold==='是');
   const watch=TRADES.filter(t=>t.hold==='持有-不执行');
+  const closed=TRADES.filter(t=>t.hold==='了结');
   function card(t){
     const bClass=(t.strat==='大市值')?'big':'small';
     return `<div class="card" onclick="openEdit('${t.code}_${t.date}')">
@@ -358,8 +380,30 @@ function renderMng(){
       <span class="badge ${bClass}">${t.strat||'小市值'}</span></div>
       <div class="row2"><span>成本<b>${t.cost}</b> · <b>${t.qty}</b>股 · ${t.date}</span></div></div>`;
   }
+  function closedCard(t){
+    const pnl=(t.sellPnl!=null)?t.sellPnl:(t.sellPrice?t.sellPrice/t.cost-1:null);
+    const col=pnl==null?'var(--sub)':(pnl>=0?'var(--up)':'var(--down)');
+    const pnlTxt=pnl==null?'—':`${pnl>=0?'+':''}${(pnl*100).toFixed(1)}%`;
+    const amt=(t.sellPrice&&t.qty)?((t.sellPrice-t.cost)*t.qty):null;
+    const amtTxt=amt==null?'':` · ${amt>=0?'+':''}${amt.toFixed(0)}元`;
+    return `<div class="card" onclick="openEdit('${t.code}_${t.date}')">
+      <div class="row1"><div><span class="nm">${t.name}</span><span class="cd">${t.code}</span></div>
+      <div class="pnl" style="color:${col}">${pnlTxt}</div></div>
+      <div class="row2"><span>成本<b>${t.cost}</b> → 卖出<b>${t.sellPrice??'—'}</b> · <b>${t.qty}</b>股</span>
+      <span>${t.date}→${t.sellDate??'—'}${amtTxt}</span></div></div>`;
+  }
   html+=`<div class="sec"><div class="sec-h">正常持仓(走策略) <span class="hint">${held.length}只</span></div>${held.map(card).join('')||'<div class="empty">无</div>'}</div>`;
   if(watch.length) html+=`<div class="sec"><div class="sec-h">只看不发信号 <span class="hint">${watch.length}只</span></div>${watch.map(card).join('')}</div>`;
+  if(closed.length){
+    // 累计实现盈亏金额
+    let totAmt=0, hasAmt=false;
+    closed.forEach(t=>{ if(t.sellPrice&&t.qty){ totAmt+=(t.sellPrice-t.cost)*t.qty; hasAmt=true; } });
+    const totCol=totAmt>=0?'var(--up)':'var(--down)';
+    const totTxt=hasAmt?` · 累计 <b style="color:${totCol}">${totAmt>=0?'+':''}${totAmt.toFixed(0)}元</b>`:'';
+    // 按卖出日期倒序
+    const sorted=[...closed].sort((a,b)=>(b.sellDate||'').localeCompare(a.sellDate||''));
+    html+=`<div class="sec"><div class="sec-h">已了结 <span class="hint">${closed.length}笔${totTxt}</span></div>${sorted.map(closedCard).join('')}</div>`;
+  }
   document.getElementById('mng-body').innerHTML=html;
 }
 
@@ -374,6 +418,7 @@ function openAdd(){
   document.querySelector('input[name=strat][value=小市值]').checked=true;
   document.querySelector('input[name=hold][value=是]').checked=true;
   document.getElementById('m-del').style.display='none';
+  document.getElementById('m-sell').style.display='none';
   document.getElementById('modal').classList.add('on');
 }
 function openEdit(key){
@@ -388,8 +433,12 @@ function openEdit(key){
   document.getElementById('f-qty').value=t.qty;
   document.getElementById('f-date').value=t.date;
   document.querySelector(`input[name=strat][value="${t.strat||'小市值'}"]`).checked=true;
-  document.querySelector(`input[name=hold][value="${t.hold}"]`).checked=true;
+  // 已了结的记录没有对应的hold单选项,默认高亮"是"(改回即撤销了结)
+  const holdRadio=document.querySelector(`input[name=hold][value="${t.hold}"]`);
+  (holdRadio||document.querySelector('input[name=hold][value=是]')).checked=true;
   document.getElementById('m-del').style.display='block';
+  // 已了结的记录不再显示卖出按钮
+  document.getElementById('m-sell').style.display=(t.hold==='了结')?'none':'block';
   document.getElementById('modal').classList.add('on');
 }
 function closeModal(){ document.getElementById('modal').classList.remove('on'); }
@@ -405,7 +454,15 @@ function saveTrade(){
   if(!/^(sh|sz)\d{6}$/.test(code)){ alert('代码格式:sh或sz+6位数字,如sh601100'); return; }
   const rec={date,name,code,cost,qty,hold,strat};
   const idx=document.getElementById('f-idx').value;
-  if(idx===''){ TRADES.unshift(rec); } else { TRADES[parseInt(idx)]=rec; }
+  if(idx===''){ TRADES.unshift(rec); }
+  else {
+    const old=TRADES[parseInt(idx)];
+    // 若原记录已了结,保留其卖出信息(除非改回持仓状态)
+    if(old&&old.hold==='了结'&&hold==='了结'){
+      rec.sellPrice=old.sellPrice; rec.sellDate=old.sellDate; rec.sellPnl=old.sellPnl;
+    }
+    TRADES[parseInt(idx)]=rec;
+  }
   save(TRADES); closeModal(); renderMng();
 }
 function delTrade(){
@@ -414,6 +471,71 @@ function delTrade(){
   if(confirm('确认删除 '+TRADES[idx].name+' ?')){
     TRADES.splice(idx,1); save(TRADES); closeModal(); renderMng();
   }
+}
+
+// ============ 卖出了结 ============
+let SELL_IDX=-1;
+function todayYmd(){
+  const d=new Date();
+  return String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
+}
+// 打开卖出弹窗(key = code_date,来自监控卡或编辑弹窗)
+function openSell(key){
+  const i=TRADES.findIndex(t=>t.code+'_'+t.date===key);
+  if(i<0) return;
+  SELL_IDX=i;
+  const t=TRADES[i];
+  document.getElementById('s-idx').value=i;
+  document.getElementById('s-title').textContent='卖出了结 · '+t.name;
+  // 默认卖出价=当前实时价(有缓存则填),否则留空
+  const q=LASTQ&&LASTQ[t.code];
+  const px=q?q.price:null;
+  document.getElementById('s-price').value = px!=null? px.toFixed(2) : '';
+  document.getElementById('s-date').value=todayYmd();
+  document.getElementById('s-info').innerHTML=
+    `${t.name} <span style="color:var(--sub)">${t.code}</span> · 成本 <b>${t.cost}</b> · <b>${t.qty}</b>股`;
+  updateSellPreview();
+  document.getElementById('sell-modal').classList.add('on');
+}
+// 从编辑弹窗点"卖出了结"进来:先关编辑弹窗再开卖出弹窗
+function openSellFromEdit(){
+  const idx=parseInt(document.getElementById('f-idx').value);
+  if(isNaN(idx)||!TRADES[idx]) return;
+  const t=TRADES[idx];
+  closeModal();
+  openSell(t.code+'_'+t.date);
+}
+function closeSellModal(){ document.getElementById('sell-modal').classList.remove('on'); SELL_IDX=-1; }
+// 实时预览盈亏
+function updateSellPreview(){
+  const t=TRADES[SELL_IDX]; if(!t) return;
+  const sp=parseFloat(document.getElementById('s-price').value);
+  const box=document.getElementById('s-preview');
+  if(!sp||sp<=0){ box.style.display='none'; return; }
+  const pnl=sp/t.cost-1;
+  const amt=(sp-t.cost)*(t.qty||0);
+  const col=pnl>=0?'var(--up)':'var(--down)';
+  box.style.display='block';
+  box.innerHTML=`预计盈亏 <b style="color:${col}">${pnl>=0?'+':''}${(pnl*100).toFixed(1)}%</b>`+
+    (t.qty?` · 金额 <b style="color:${col}">${pnl>=0?'+':''}${amt.toFixed(0)}</b> 元`:'');
+}
+function confirmSell(){
+  const t=TRADES[SELL_IDX]; if(!t){ closeSellModal(); return; }
+  const sp=parseFloat(document.getElementById('s-price').value);
+  const sd=document.getElementById('s-date').value.trim();
+  if(!sp||sp<=0){ alert('请填卖出价'); return; }
+  if(!/^\d{6}$/.test(sd)){ alert('卖出日期格式:YYMMDD,如260706'); return; }
+  const pnl=sp/t.cost-1;
+  if(!confirm(`确认卖出 ${t.name} @ ${sp} ?\n实现盈亏 ${pnl>=0?'+':''}${(pnl*100).toFixed(1)}%`)) return;
+  // 归档为"了结",记录卖出价/日期/实现盈亏
+  t.hold='了结';
+  t.sellPrice=sp;
+  t.sellDate=sd;
+  t.sellPnl=+(pnl).toFixed(4);
+  save(TRADES);
+  closeSellModal();
+  renderMng();
+  if(LASTQ) renderMon(LASTQ);   // 监控页移除该票
 }
 
 // ============ 备份 ============
