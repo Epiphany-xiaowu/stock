@@ -854,6 +854,54 @@ async function computeHighWarn(fb){
   }
   return hiMap;
 }
+// ============ 龙虎榜资金面(东财,JSONP绕CORS) ============
+let _jsonpId=0;
+function jsonp(url,timeout=12000){
+  return new Promise((resolve,reject)=>{
+    const cb='__lhb_cb_'+(++_jsonpId);
+    const s=document.createElement('script');
+    let done=false;
+    const clean=()=>{ try{delete window[cb];}catch(e){window[cb]=undefined;} if(s.parentNode)s.parentNode.removeChild(s); };
+    const timer=setTimeout(()=>{ if(!done){done=true;clean();reject(new Error('timeout'));} },timeout);
+    window[cb]=(data)=>{ done=true; clearTimeout(timer); clean(); resolve(data); };
+    s.onerror=()=>{ if(!done){done=true;clearTimeout(timer);clean();reject(new Error('script error'));} };
+    s.src=url+(url.includes('?')?'&':'?')+'callback='+cb;
+    document.body.appendChild(s);
+  });
+}
+// 查单票龙虎榜:是否上榜+净额+北向/机构净额。ymd格式 YYYYMMDD -> 转 YYYY-MM-DD
+function lhbDate(ymd){ return `${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}`; }
+async function fetchLhb(code6,dateStr){
+  const base='https://datacenter-web.eastmoney.com/api/data/v1/get';
+  const flt=`(TRADE_DATE='${dateStr}')(SECURITY_CODE="${code6}")`;
+  // 先查是否上榜
+  try{
+    const chk=await jsonp(base+'?reportName=RPT_DAILYBILLBOARD_DETAILS&columns=ALL&pageSize=5&source=WEB&client=WEB&filter='+encodeURIComponent(flt));
+    if(!chk||!chk.result||!chk.result.data||!chk.result.data.length) return {onList:false};
+    // 查买卖明细算北向/机构净额
+    const [buy,sell]=await Promise.all([
+      jsonp(base+'?reportName=RPT_BILLBOARD_DAILYDETAILSBUY&columns=ALL&pageSize=50&source=WEB&client=WEB&filter='+encodeURIComponent(flt)),
+      jsonp(base+'?reportName=RPT_BILLBOARD_DAILYDETAILSSELL&columns=ALL&pageSize=50&source=WEB&client=WEB&filter='+encodeURIComponent(flt))
+    ]);
+    const bd=(buy&&buy.result&&buy.result.data)||[], sd=(sell&&sell.result&&sell.result.data)||[];
+    let north=0,inst=0,totBuy=0,totSell=0;
+    bd.forEach(x=>{ const nm=x.OPERATEDEPT_NAME||'',v=+(x.BUY||0); totBuy+=v; if(nm.includes('股通'))north+=v; else if(nm.includes('机构专用'))inst+=v; });
+    sd.forEach(x=>{ const nm=x.OPERATEDEPT_NAME||'',v=+(x.SELL||0); totSell+=v; if(nm.includes('股通'))north-=v; else if(nm.includes('机构专用'))inst-=v; });
+    return {onList:true, net:totBuy-totSell, north, inst};
+  }catch(e){ return {err:true}; }
+}
+// 批量并发查龙虎榜(每批6只)。dateStr与选股涨停日一致
+async function computeLhb(fb,dateStr){
+  const m={};
+  for(let i=0;i<fb.length;i+=6){
+    const batch=fb.slice(i,i+6);
+    await Promise.all(batch.map(async(x,j)=>{
+      const idx=i+j, c6=String(x.c).padStart(6,'0');
+      m[idx]=await fetchLhb(c6,dateStr);
+    }));
+  }
+  return m;
+}
 async function marketStrength(){
   const codes=['sh000001','sz399001','sz399006'];
   let tot=0, mx=0, detail=[];
@@ -904,8 +952,9 @@ async function pickStocks(){
   let topIdx=fb.findIndex(x=>!heldBig.has(String(x.c).padStart(6,'0')));
   if(topIdx<0) topIdx=0;
   // 高位警示:拉候选票前复权日K,算前20/60日涨幅(口径见项目总结)
-  document.getElementById('pick-body').innerHTML=html+'<div class="empty">正在检测各候选前期涨幅(高位警示)…</div>';
+  document.getElementById('pick-body').innerHTML=html+'<div class="empty">正在检测各候选前期涨幅+龙虎榜资金面…</div>';
   const hiMap=await computeHighWarn(fb);
+  const lhbMap=await computeLhb(fb,lhbDate(ymd));   // 龙虎榜:上榜日=涨停日ymd
   fb.forEach((x,i)=>{
     const c=String(x.c).padStart(6,'0');
     const cir=(x.ltsz/1e8).toFixed(0);
@@ -930,11 +979,28 @@ async function pickStocks(){
         hiLine=`<div style="font-size:11px;color:var(--sub);margin-top:4px">前期涨幅 20日+${r20p}% / 60日+${r60p}%</div>`;
       }
     }
+    // 龙虎榜资金面
+    const lhb=lhbMap[i]; let lhbLine='';
+    if(lhb){
+      if(lhb.err){
+        lhbLine=`<div style="font-size:11px;color:var(--sub);margin-top:3px">🐟龙虎榜 获取失败(内网可能拦,换流量)</div>`;
+      }else if(!lhb.onList){
+        lhbLine=`<div style="font-size:11px;color:var(--sub);margin-top:3px">🐟龙虎榜 未上榜</div>`;
+      }else{
+        const yi=v=>(v/1e8);
+        const seg=(lb,v)=>{ const y=yi(v); if(Math.abs(y)<0.01) return ''; const col=y>=0?'var(--up)':'var(--down)'; return ` · <span style="color:${col}">${lb}${y>=0?'+':''}${y.toFixed(1)}亿</span>`; };
+        const netCol=lhb.net>=0?'var(--up)':'var(--down)';
+        // 出货警示:北向或机构大额净卖
+        const dump=(lhb.north<=-3e7||lhb.inst<=-3e7);
+        const warn=dump?` <span style="color:var(--crit);font-weight:600">⚠️主力净卖(疑出货)</span>`:'';
+        lhbLine=`<div style="font-size:11px;margin-top:3px">🐟龙虎榜 <span style="color:${netCol}">净${lhb.net>=0?'+':''}${yi(lhb.net).toFixed(1)}亿</span>${seg('北向',lhb.north)}${seg('机构',lhb.inst)}${warn}</div>`;
+      }
+    }
     html+=`<div class="card" style="${isTop?'border-color:var(--big)':''}">
       <div class="row1"><div><span style="font-size:13px">${star}</span><span class="nm">${x.n}</span><span class="cd">${c}</span> ${heldTag}${hiTag}</div>
         <div style="font-size:13px;color:var(--big);font-weight:600">${cir}亿</div></div>
       <div class="row2"><span>封板 <b>${quality}</b> · 首封${fmtFbt(x.fbt)}</span>
-        <span>${x.hybk||''}</span></div>${hiLine}`;
+        <span>${x.hybk||''}</span></div>${hiLine}${lhbLine}`;
     if(isTop){
       const zt=(x.p/1e3);
       const hi9=(zt*1.09).toFixed(2);
@@ -950,6 +1016,7 @@ async function pickStocks(){
     📊 每天买流通市值最大的未持仓主板首板(⭐)。✋=你已持仓(自动顺延)。<br>
     🟢封板果断(0炸)次日胜率略高;同市值档优先🟢。<br>
     <span style="color:#ff8f8f">⚠️高位</span>=前60翻倍>100%或前20>50%,近一年回测这档均收-3%、胜率19%(亏损档),建议避开;<span style="color:var(--warn)">偏高</span>=前20日30~50%,仍小赚但胜率略降,留意。<br>
+    🐟龙虎榜=上榜日(涨停日)资金,北向=沪深股通、机构=机构专用席位净额,仅辅助人工判断不改选股;未上榜≠没资金。<br>
     ⚠️ 三年回测该策略仅+1.2%/笔、胜率32%,强周期(牛市赚熊市亏),小仓位博弈,不构成投资建议。</div>`;
   document.getElementById('pick-body').innerHTML=html;
   document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN')+' · 数据源东财涨停池';
