@@ -153,19 +153,14 @@
   <div class="sheet">
     <h3 id="m-title">记一笔买入</h3>
     <input type="hidden" id="f-idx">
-    <label>股票代码(如 sh601100 / sz000506)</label>
-    <input id="f-code" placeholder="sh或sz+6位数字,输完自动带出名称/现价" oninput="onCodeInput()">
+    <label>股票代码(直接输6位数字,自动补sh/sz)</label>
+    <input id="f-code" placeholder="如 601138 或 000725,输完自动带出名称/现价" oninput="onCodeInput()">
     <label>股票名称 <span class="hint" id="nm-auto"></span></label>
     <input id="f-name" placeholder="输代码后自动填,可改">
     <label>成本价(元) <span class="hint" id="px-auto"></span></label>
     <input id="f-cost" type="number" inputmode="decimal" placeholder="自动填现价,按实际成交价改">
     <label>持股数量(股,1手=100股)</label>
     <input id="f-qty" type="number" inputmode="numeric" placeholder="如 200">
-    <div style="display:flex;gap:6px;margin-top:6px">
-      <button type="button" class="btn sm gray" style="flex:1" onclick="qtyByAmount(20000)">按2万算</button>
-      <button type="button" class="btn sm gray" style="flex:1" onclick="qtyByAmount(30000)">3万</button>
-      <button type="button" class="btn sm gray" style="flex:1" onclick="qtyByAmount(50000)">5万</button>
-    </div>
     <label>买入日期(YYMMDD,如 260706)</label>
     <input id="f-date" inputmode="numeric" placeholder="260706">
     <label>用哪套策略买入?</label>
@@ -431,8 +426,20 @@ function renderMng(){
 // ============ 弹窗 ============
 // 输入代码后自动带出名称+现价(复用腾讯行情接口)
 let _codeTimer=null;
+// 代码规范化:6位纯数字自动补 sh/sz 前缀(6/9开头→sh, 0/3开头→sz);已带前缀则原样
+function normCode(raw){
+  let c=String(raw||'').trim().toLowerCase().replace(/\s/g,'');
+  if(/^(sh|sz)\d{6}$/.test(c)) return c;
+  if(/^\d{6}$/.test(c)){
+    if(c[0]==='6'||c[0]==='9') return 'sh'+c;   // 沪市主板60/科创68/B股9
+    if(c[0]==='0'||c[0]==='3') return 'sz'+c;   // 深市主板00/创业30
+    if(c[0]==='4'||c[0]==='8') return 'bj'+c;   // 北交所(行情接口一般不支持,仅补全)
+  }
+  return c;
+}
 function onCodeInput(){
-  const code=document.getElementById('f-code').value.trim().toLowerCase();
+  const raw=document.getElementById('f-code').value;
+  const code=normCode(raw);
   document.getElementById('nm-auto').textContent='';
   document.getElementById('px-auto').textContent='';
   if(!/^(sh|sz)\d{6}$/.test(code)) return;
@@ -445,33 +452,24 @@ function onCodeInput(){
         // 名称:若用户没手填过就自动填
         const nm=document.getElementById('f-name');
         if(!nm.value.trim()) nm.value=x.name;
-        document.getElementById('nm-auto').textContent='✓ '+x.name;
+        document.getElementById('nm-auto').textContent=`✓ ${x.name}(${code})`;
         // 现价:若成本价空着就填现价(方便,实际成交价可改)
         const cs=document.getElementById('f-cost');
         if(!cs.value){ cs.value=x.price; }
-        // 数量:若还空着,默认按2万自动算好整百股(可点3万/5万或手改)
-        const qt=document.getElementById('f-qty');
-        if(!qt.value){
-          const sh=Math.floor(20000/x.price/100)*100;
-          if(sh>0){ qt.value=sh; document.getElementById('px-auto').textContent=`现价${x.price} · 已按2万填${sh}股(可改)`; }
-          else document.getElementById('px-auto').textContent='现价'+x.price+'(价高,2万不足1手,请手填数量)';
-        }else{
-          document.getElementById('px-auto').textContent='现价'+x.price;
-        }
+        document.getElementById('px-auto').textContent='现价'+x.price+'(成本价可改,数量请手填)';
       }else{
         document.getElementById('nm-auto').textContent='未查到,手动填';
       }
     }catch(e){ document.getElementById('nm-auto').textContent='查询失败,手动填'; }
   },400);
 }
-// 按投入金额算整百股(1手=100股)
+// 按投入金额算整百股(1手=100股)—— 保留备用,当前表单未用
 function qtyByAmount(amt){
   const cost=parseFloat(document.getElementById('f-cost').value);
   if(!cost||cost<=0){ alert('请先填成本价(输代码会自动带现价)'); return; }
   const shares=Math.floor(amt/cost/100)*100;
   if(shares<=0){ alert('该价位'+amt+'元买不到1手'); return; }
   document.getElementById('f-qty').value=shares;
-  document.getElementById('px-auto').textContent=`≈${amt}元→${shares}股(实际${(shares*cost).toFixed(0)}元)`;
 }
 function openAdd(){
   document.getElementById('m-title').textContent='记一笔买入';
@@ -513,14 +511,14 @@ function openEdit(key){
 function closeModal(){ document.getElementById('modal').classList.remove('on'); }
 function saveTrade(){
   const name=document.getElementById('f-name').value.trim();
-  const code=document.getElementById('f-code').value.trim().toLowerCase();
+  const code=normCode(document.getElementById('f-code').value);   // 6位数字自动补sh/sz
   const cost=parseFloat(document.getElementById('f-cost').value);
   const qty=parseInt(document.getElementById('f-qty').value)||0;
   const date=document.getElementById('f-date').value.trim();
   const strat=document.querySelector('input[name=strat]:checked').value;
   const hold=document.querySelector('input[name=hold]:checked').value;
   if(!name||!code||!cost||!date){ alert('名称/代码/成本/日期必填'); return; }
-  if(!/^(sh|sz)\d{6}$/.test(code)){ alert('代码格式:sh或sz+6位数字,如sh601100'); return; }
+  if(!/^(sh|sz)\d{6}$/.test(code)){ alert('代码格式:直接输6位数字(如601138),或sh/sz+6位'); return; }
   const rec={date,name,code,cost,qty,hold,strat};
   const idx=document.getElementById('f-idx').value;
   if(idx===''){ TRADES.unshift(rec); }
