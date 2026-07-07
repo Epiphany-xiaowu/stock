@@ -854,16 +854,16 @@ function klPattern(cl){
   const bigUp=rets.filter(r=>r>=0.05).length;   // 大涨天数(≥5%)
   const bigDown=rets.filter(r=>r<=-0.05).length; // 大跌天数
   const maxAbs=Math.max(...rets.map(r=>Math.abs(r)),0);
-  // 判断(优先级:危险信号先判)
+  // 判断(优先级:危险信号先判)—— 文案带回测依据,健康组仅中性描述(回测优势弱)
   if(up5>=0.20 && bigUp>=2)
-    return {cls:'bad',txt:'高位连续加速涨(接盘位),危险'};
+    return {cls:'bad',txt:'高位连续加速涨(接盘位),回测胜率仅26%,避开'};
   if(up5<=-0.15 && bigDown>=2)
-    return {cls:'bad',txt:'涨停前暴跌数日后反抽,危险'};
+    return {cls:'bad',txt:'暴跌数日后反抽,回测均收-1.9%(唯一负档),避开'};
   if(up5<=-0.03 && bigDown>=1)
-    return {cls:'good',txt:'回调洗盘后反包,健康'};
+    return {cls:'good',txt:'回调洗盘后反包'};
   if(up5>=0 && up5<0.15 && bigUp<=1 && maxAbs<0.06)
-    return {cls:'good',txt:'温和上行/低位启动,健康'};
-  return {cls:'mid',txt:'震荡整理,中性'};
+    return {cls:'good',txt:'温和上行/低位启动'};
+  return {cls:'mid',txt:'震荡整理'};
 }
 // 批量拉候选票K线算高位(分批并发,避免一次几十个请求被限流)
 async function computeHighWarn(fb){
@@ -1003,12 +1003,15 @@ async function pickStocks(){
         hiLine=`<div style="font-size:11px;color:var(--sub);margin-top:4px">前期涨幅 20日+${r20p}% / 60日+${r60p}%</div>`;
       }
     }
-    // K线形态(启发式,辅助参考)
+    // K线形态(启发式;回测显示仅"危险"信号有避雷价值,健康组优势弱→淡化)
     let patLine='';
     if(hi&&hi.pat){
-      const pc={good:'var(--down)',bad:'var(--crit)',mid:'var(--sub)'}[hi.pat.cls];
-      const icon={good:'📈',bad:'📉',mid:'➖'}[hi.pat.cls];
-      patLine=`<div style="font-size:11px;color:${pc};margin-top:3px">${icon}形态 ${hi.pat.txt}</div>`;
+      if(hi.pat.cls==='bad'){
+        patLine=`<div style="font-size:11px;color:var(--crit);margin-top:3px">📉形态 ${hi.pat.txt}</div>`;
+      }else{
+        // 健康/中性统一中性灰,不吹捧"能买"
+        patLine=`<div style="font-size:11px;color:var(--sub);margin-top:3px">形态 ${hi.pat.txt}</div>`;
+      }
     }
     // 龙虎榜资金面
     const lhb=lhbMap[i]; let lhbLine='';
@@ -1048,7 +1051,7 @@ async function pickStocks(){
     🟢封板果断(0炸)次日胜率略高;同市值档优先🟢。<br>
     <span style="color:#ff8f8f">⚠️高位</span>=前60翻倍>100%或前20>50%,近一年回测这档均收-3%、胜率19%(亏损档),建议避开;<span style="color:var(--warn)">偏高</span>=前20日30~50%,仍小赚但胜率略降,留意。<br>
     🐟龙虎榜=上榜日(涨停日)资金,北向=沪深股通、机构=机构专用席位净额,仅辅助人工判断不改选股;未上榜≠没资金。<br>
-    📈 看涨停前K线形态:<b>温和上行/回调洗盘后反包</b>=健康;<b>高位连续加速涨、或暴跌数天后反抽</b>=危险(接盘位),优先避开。<br>
+    📉 K线形态:回测显示对首板是弱信号,仅两个<b>危险</b>形态值得避雷——<b>高位连续加速涨</b>(胜率26%)、<b>暴跌数日后反抽</b>(均收-1.9%);其余形态区分力弱,仅供参考。<br>
     ⚠️ 三年回测该策略仅+1.2%/笔、胜率32%,强周期(牛市赚熊市亏),小仓位博弈,不构成投资建议。</div>`;
   document.getElementById('pick-body').innerHTML=html;
   document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN')+' · 数据源东财涨停池';
