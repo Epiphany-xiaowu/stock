@@ -178,8 +178,8 @@
     <input id="f-date" inputmode="numeric" placeholder="260706">
     <label>用哪套策略买入?</label>
     <div class="seg">
-      <label><input type="radio" name="strat" value="大市值"><span>大市值(10%/30天)</span></label>
-      <label><input type="radio" name="strat" value="小市值" checked><span>小市值(6%/25天)</span></label>
+      <label><input type="radio" name="strat" value="大市值" checked><span>大市值(10%/30天)</span></label>
+      <label><input type="radio" name="strat" value="小市值"><span>小市值(6%/25天)</span></label>
     </div>
     <label>持仓状态</label>
     <div class="seg s2">
@@ -507,7 +507,7 @@ function openAdd(){
   // 默认日期=今天
   const d=new Date(); const ymd=String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
   document.getElementById('f-date').value=ymd;
-  document.querySelector('input[name=strat][value=小市值]').checked=true;
+  document.querySelector('input[name=strat][value=大市值]').checked=true;
   document.querySelector('input[name=hold][value=是]').checked=true;
   document.getElementById('m-del').style.display='none';
   document.getElementById('m-sell').style.display='none';
@@ -1017,6 +1017,7 @@ async function pickStocks(){
     🟢封板果断(0炸)次日胜率略高;同市值档优先🟢。<br>
     <span style="color:#ff8f8f">⚠️高位</span>=前60翻倍>100%或前20>50%,近一年回测这档均收-3%、胜率19%(亏损档),建议避开;<span style="color:var(--warn)">偏高</span>=前20日30~50%,仍小赚但胜率略降,留意。<br>
     🐟龙虎榜=上榜日(涨停日)资金,北向=沪深股通、机构=机构专用席位净额,仅辅助人工判断不改选股;未上榜≠没资金。<br>
+    📈 看涨停前K线形态:<b>温和上行/回调洗盘后反包</b>=健康;<b>高位连续加速涨、或暴跌数天后反抽</b>=危险(接盘位),优先避开。<br>
     ⚠️ 三年回测该策略仅+1.2%/笔、胜率32%,强周期(牛市赚熊市亏),小仓位博弈,不构成投资建议。</div>`;
   document.getElementById('pick-body').innerHTML=html;
   document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN')+' · 数据源东财涨停池';
