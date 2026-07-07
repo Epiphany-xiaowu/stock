@@ -449,7 +449,15 @@ function onCodeInput(){
         // 现价:若成本价空着就填现价(方便,实际成交价可改)
         const cs=document.getElementById('f-cost');
         if(!cs.value){ cs.value=x.price; }
-        document.getElementById('px-auto').textContent='现价'+x.price+'(点上方"按2万算"自动算股数)';
+        // 数量:若还空着,默认按2万自动算好整百股(可点3万/5万或手改)
+        const qt=document.getElementById('f-qty');
+        if(!qt.value){
+          const sh=Math.floor(20000/x.price/100)*100;
+          if(sh>0){ qt.value=sh; document.getElementById('px-auto').textContent=`现价${x.price} · 已按2万填${sh}股(可改)`; }
+          else document.getElementById('px-auto').textContent='现价'+x.price+'(价高,2万不足1手,请手填数量)';
+        }else{
+          document.getElementById('px-auto').textContent='现价'+x.price;
+        }
       }else{
         document.getElementById('nm-auto').textContent='未查到,手动填';
       }
