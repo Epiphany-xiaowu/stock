@@ -919,11 +919,12 @@ async function fetchLhb(code6,dateStr){
   }catch(e){ return {err:true}; }
 }
 // 探测最近一个"已发布龙虎榜"的交易日:从 startYmd(YYYY-MM-DD)往前找,最多回退5天
+function fmtYmd(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 async function recentLhbDate(startYmd){
   const base='https://datacenter-web.eastmoney.com/api/data/v1/get';
   let d=new Date(startYmd+'T00:00:00');
   for(let back=0;back<6;back++){
-    const ds=d.toISOString().slice(0,10);
+    const ds=fmtYmd(d);   // 用本地时间格式化(不能用toISOString,会因UTC差一天)
     const w=d.getDay();
     if(w!==0&&w!==6){   // 跳过周末
       try{
