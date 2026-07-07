@@ -839,7 +839,31 @@ function highWarn(cl){
   const hot=(r60!=null&&r60>=1.0)||r20>=0.5;
   // warn=偏高(回测仍小赚但胜率略降,留意不劝退): 前20日30~50%
   const warn=!hot && r20>=0.3;
-  return {r20,r60,hot,warn};
+  return {r20,r60,hot,warn,pat:klPattern(cl)};
+}
+// 涨停前K线形态识别(启发式,非回测验证,仅辅助)
+// cl: 收盘价数组,最后一根 cl[n-1] = 涨停日收盘
+function klPattern(cl){
+  const n=cl.length; if(n<11) return null;
+  const zt=cl[n-1];                       // 涨停日
+  const prev=cl[n-2];                     // 涨停前一日
+  // 涨停前5日(不含涨停日)每日涨跌
+  const seg=cl.slice(Math.max(0,n-7),n-1);      // 涨停前约6根
+  const rets=[]; for(let i=1;i<seg.length;i++) rets.push(seg[i]/seg[i-1]-1);
+  const up5=prev/cl[n-7]-1;              // 涨停前5日累计涨跌(到前一日)
+  const bigUp=rets.filter(r=>r>=0.05).length;   // 大涨天数(≥5%)
+  const bigDown=rets.filter(r=>r<=-0.05).length; // 大跌天数
+  const maxAbs=Math.max(...rets.map(r=>Math.abs(r)),0);
+  // 判断(优先级:危险信号先判)
+  if(up5>=0.20 && bigUp>=2)
+    return {cls:'bad',txt:'高位连续加速涨(接盘位),危险'};
+  if(up5<=-0.15 && bigDown>=2)
+    return {cls:'bad',txt:'涨停前暴跌数日后反抽,危险'};
+  if(up5<=-0.03 && bigDown>=1)
+    return {cls:'good',txt:'回调洗盘后反包,健康'};
+  if(up5>=0 && up5<0.15 && bigUp<=1 && maxAbs<0.06)
+    return {cls:'good',txt:'温和上行/低位启动,健康'};
+  return {cls:'mid',txt:'震荡整理,中性'};
 }
 // 批量拉候选票K线算高位(分批并发,避免一次几十个请求被限流)
 async function computeHighWarn(fb){
@@ -979,6 +1003,13 @@ async function pickStocks(){
         hiLine=`<div style="font-size:11px;color:var(--sub);margin-top:4px">前期涨幅 20日+${r20p}% / 60日+${r60p}%</div>`;
       }
     }
+    // K线形态(启发式,辅助参考)
+    let patLine='';
+    if(hi&&hi.pat){
+      const pc={good:'var(--down)',bad:'var(--crit)',mid:'var(--sub)'}[hi.pat.cls];
+      const icon={good:'📈',bad:'📉',mid:'➖'}[hi.pat.cls];
+      patLine=`<div style="font-size:11px;color:${pc};margin-top:3px">${icon}形态 ${hi.pat.txt}</div>`;
+    }
     // 龙虎榜资金面
     const lhb=lhbMap[i]; let lhbLine='';
     if(lhb){
@@ -1000,7 +1031,7 @@ async function pickStocks(){
       <div class="row1"><div><span style="font-size:13px">${star}</span><span class="nm">${x.n}</span><span class="cd">${c}</span> ${heldTag}${hiTag}</div>
         <div style="font-size:13px;color:var(--big);font-weight:600">${cir}亿</div></div>
       <div class="row2"><span>封板 <b>${quality}</b> · 首封${fmtFbt(x.fbt)}</span>
-        <span>${x.hybk||''}</span></div>${hiLine}${lhbLine}`;
+        <span>${x.hybk||''}</span></div>${hiLine}${patLine}${lhbLine}`;
     if(isTop){
       const zt=(x.p/1e3);
       const hi9=(zt*1.09).toFixed(2);
