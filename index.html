@@ -973,6 +973,39 @@ async function marketStrength(){
   else { level='🟢防守'; color='#26a65b'; advice='行情弱,谨慎/减量(该策略熊市易亏)'; }
   return {score:tot,max:mx,pct,level,color,advice,detail:detail.join(' ')};
 }
+// 综合评分(仅用回测验证过的因子;市值不参与,仍靠主排序)
+// 返回 {score, tags:[...加分/扣分理由]}
+function scoreOf(hi,lhb,zb){
+  let s=0; const tags=[];
+  // 龙虎榜净买
+  if(lhb&&lhb.onList){
+    const dump=(lhb.north<=-3e7||lhb.inst<=-3e7);
+    const netYi=lhb.net/1e8;
+    if(dump){ s-=3; tags.push('主力疑出货-3'); }
+    else if(netYi>=0.5){ s+=2; tags.push('资金强+2'); }
+    else if(netYi>0){ s+=1; tags.push('净买入+1'); }
+    else if(netYi<0){ s-=1; tags.push('净卖出-1'); }
+  }
+  // 高位
+  if(hi){
+    if(hi.hot){ s-=3; tags.push('⚠️高位-3'); }
+    else if(hi.warn){ s-=1; tags.push('偏高-1'); }
+  }
+  // 封板质量
+  if(zb===0){ s+=1; tags.push('果断封板+1'); }
+  else if(zb>=3){ s-=1; tags.push(zb+'炸-1'); }
+  // K线危险形态(仅扣分)
+  if(hi&&hi.pat&&hi.pat.cls==='bad'){ s-=1; tags.push('危险形态-1'); }
+  return {score:s,tags};
+}
+// 综合分→星级展示
+function scoreBadge(s){
+  if(s>=3) return {ic:'🟢🟢🟢',lb:'强',col:'var(--up)'};
+  if(s>=1) return {ic:'🟢🟢',lb:'中上',col:'var(--up)'};
+  if(s===0) return {ic:'🟢',lb:'中性',col:'var(--sub)'};
+  if(s>=-2) return {ic:'🔴',lb:'偏弱',col:'var(--down)'};
+  return {ic:'🔴🔴',lb:'差·避开',col:'var(--crit)'};
+}
 async function pickStocks(){
   document.getElementById('pick-body').innerHTML='<div class="empty">加载中…(拉涨停池+算行情强度)</div>';
   let ymd,pool;
@@ -999,11 +1032,13 @@ async function pickStocks(){
     document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN'); return; }
   let topIdx=fb.findIndex(x=>!heldBig.has(String(x.c).padStart(6,'0')));
   if(topIdx<0) topIdx=0;
+  html+='<!--RANK-->';   // 今日推荐排序卡占位,循环后回填
   // 高位警示:拉候选票前复权日K,算前20/60日涨幅(口径见项目总结)
   document.getElementById('pick-body').innerHTML=html+'<div class="empty">正在检测各候选前期涨幅+龙虎榜资金面…</div>';
   const hiMap=await computeHighWarn(fb);
   const lhbRes=await computeLhb(fb,lhbDate(ymd));   // 龙虎榜:涨停日基准,内部自动回退到最近已发布日
   const lhbMap=lhbRes.map, lhbDay=lhbRes.day;
+  const rankList=[];   // 收集综合评分,循环后做"今日推荐排序"
   fb.forEach((x,i)=>{
     const c=String(x.c).padStart(6,'0');
     const cir=(x.ltsz/1e8).toFixed(0);
@@ -1062,9 +1097,14 @@ async function pickStocks(){
         lhbLine=`<div style="font-size:11px;margin-top:3px">🐟龙虎榜 <span style="color:${netCol}">净${lhb.net>=0?'+':''}${netYi.toFixed(1)}亿</span>${seg('北向',lhb.north)}${seg('机构',lhb.inst)}<br><span style="margin-left:16px">${adv}</span></div>`;
       }
     }
+    // 综合评分(市值不参与,仅辅助因子)
+    const sc=scoreOf(hi,lhb,zb);
+    const bg=scoreBadge(sc.score);
+    rankList.push({name:x.n,code:c,score:sc.score,tags:sc.tags,isTop,cir:+cir});
+    const scoreLine=`<div style="font-size:11px;margin-top:4px;color:${bg.col};font-weight:600">综合 ${bg.ic} ${sc.score>=0?'+':''}${sc.score}分·${bg.lb}${sc.tags.length?' <span style="font-weight:400;color:var(--sub)">'+sc.tags.join(' ')+'</span>':''}</div>`;
     html+=`<div class="card" style="${isTop?'border-color:var(--big)':''}">
       <div class="row1"><div><span style="font-size:13px">${star}</span><span class="nm">${x.n}</span><span class="cd">${c}</span> ${heldTag}${hiTag}</div>
-        <div style="font-size:13px;color:var(--big);font-weight:600">${cir}亿</div></div>
+        <div style="font-size:13px;color:var(--big);font-weight:600">${cir}亿</div></div>${scoreLine}
       <div class="row2"><span>封板 <b>${quality}</b> · 首封${fmtFbt(x.fbt)}</span>
         <span>${x.hybk||''}</span></div>${hiLine}${patLine}${lhbLine}`;
     if(isTop){
@@ -1078,12 +1118,28 @@ async function pickStocks(){
     }
     html+='</div>';
   });
+  // 今日推荐排序卡:按综合分降序,同分市值大者优先
+  const ranked=[...rankList].sort((a,b)=> (b.score-a.score) || (b.cir-a.cir));
+  const top=ranked.slice(0,5);
+  let rankCard=`<div class="card" style="border-color:var(--big);margin-bottom:8px">
+    <div style="font-size:13px;font-weight:700;color:var(--big);margin-bottom:6px">🏆 今日推荐排序(综合评分)</div>`;
+  top.forEach((r,idx)=>{
+    const bg=scoreBadge(r.score);
+    const starMark=r.isTop?'⭐':'';
+    rankCard+=`<div style="font-size:12px;margin:3px 0;color:var(--txt)">
+      <b>${idx+1}.</b> ${r.name}${starMark} <span class="cd">${r.code}</span>
+      <span style="color:${bg.col};font-weight:600">${r.score>=0?'+':''}${r.score}分</span>
+      <span style="color:var(--sub);font-size:11px"> ${r.cir}亿 · ${r.tags.join(' ')||'—'}</span></div>`;
+  });
+  rankCard+=`<div style="font-size:10px;color:var(--sub);margin-top:6px">⭐=市值首选(仍按市值);本排序综合已验证辅助因子,权重人为设定未组合回测,仅辅助参考</div></div>`;
+  html=html.replace('<!--RANK-->',rankCard);
   html+=`<div class="note">
     📊 每天买流通市值最大的未持仓主板首板(⭐)。✋=你已持仓(自动顺延)。<br>
     🟢封板果断(0炸)次日胜率略高;同市值档优先🟢。<br>
     <span style="color:#ff8f8f">⚠️高位</span>=前60翻倍>100%或前20>50%,近一年回测这档均收-3%、胜率19%(亏损档),建议避开;<span style="color:var(--warn)">偏高</span>=前20日30~50%,仍小赚但胜率略降,留意。<br>
     🐟龙虎榜=上榜日(涨停日)资金,北向=沪深股通、机构=机构专用席位净额,仅辅助人工判断不改选股;未上榜≠没资金。<br>
     📉 K线形态:回测显示对首板是弱信号,仅两个<b>危险</b>形态值得避雷——<b>高位连续加速涨</b>(胜率26%)、<b>暴跌数日后反抽</b>(均收-1.9%);其余形态区分力弱,仅供参考。<br>
+    🏆 综合评分=龙虎榜净买(±)+高位(-)+封板(±)+危险形态(-),均为已验证因子;⭐首选仍按市值不受评分影响,评分权重人为设定未组合回测,仅辅助排序。<br>
     ⚠️ 三年回测该策略仅+1.2%/笔、胜率32%,强周期(牛市赚熊市亏),小仓位博弈,不构成投资建议。</div>`;
   document.getElementById('pick-body').innerHTML=html;
   document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN')+' · 数据源东财涨停池';
