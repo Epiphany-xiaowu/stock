@@ -86,6 +86,19 @@
 </style>
 </head>
 <body>
+<!-- 密码锁:验证通过前遮住全部内容;通过后本设备记住,不再询问 -->
+<div id="lock" style="position:fixed;inset:0;z-index:9999;background:#0f1115;display:flex;
+  flex-direction:column;align-items:center;justify-content:center;padding:24px">
+  <div style="font-size:20px;font-weight:600;margin-bottom:6px">🔒 A股双策略助手</div>
+  <div style="font-size:12px;color:#9aa0ab;margin-bottom:20px">请输入访问密码</div>
+  <input id="lock-pw" type="password" inputmode="text" placeholder="密码"
+    style="width:min(280px,80vw);padding:12px;border-radius:10px;border:1px solid #2c313c;
+    background:#22262f;color:#e6e8ec;font-size:16px;text-align:center"
+    onkeydown="if(event.key==='Enter')tryUnlock()">
+  <div id="lock-msg" style="font-size:12px;color:#ff4d4f;height:18px;margin-top:8px"></div>
+  <button onclick="tryUnlock()" style="width:min(280px,80vw);padding:12px;border:none;
+    border-radius:10px;background:#4a9eff;color:#fff;font-size:16px;font-weight:600;margin-top:6px">进入</button>
+</div>
 <header>
   <h1>A股双策略助手 <span class="hint" id="stamp"></span></h1>
   <div class="hint">大市值 止损-10%/持仓30天 · 小市值 止损-6%/持仓25天</div>
@@ -197,6 +210,30 @@
 </div>
 
 <script>
+// ============ 访问密码锁 ============
+const LOCK_HASH='bd9c03408d399ea46a16cdd394fcbcb531020bc4357b19bb433d1005f118d06b'; // SHA-256
+const LOCK_KEY='stock_unlocked_v1';
+async function sha256(s){
+  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function tryUnlock(){
+  const pw=document.getElementById('lock-pw').value;
+  const h=await sha256(pw);
+  if(h===LOCK_HASH){
+    localStorage.setItem(LOCK_KEY,'1');
+    document.getElementById('lock').style.display='none';
+  }else{
+    document.getElementById('lock-msg').textContent='密码错误';
+    document.getElementById('lock-pw').value='';
+  }
+}
+// 本设备已验证过则直接放行
+if(localStorage.getItem(LOCK_KEY)==='1'){
+  document.getElementById('lock').style.display='none';
+}
+// 锁定本设备(供需要时调用):localStorage.removeItem('stock_unlocked_v1')
+
 // ============ 策略参数(与电脑skill一致) ============
 const PARAMS={'大市值':{SL:0.10,H:30},'小市值':{SL:0.06,H:25}};
 const EARLY_DAYS=3, CRIT=0.01;
@@ -204,21 +241,11 @@ const INDEX={sh000001:'上证',sz399001:'深证',sz399006:'创业板'};
 let SORT=localStorage.getItem('sortmode')||'prio';   // 排序方式
 let LASTQ=null;                                       // 缓存最近一次行情,切排序免重拉
 
-// ============ 预置持仓(从电脑skill导入,首次打开用) ============
+// ============ 示例持仓(仅新设备首次打开的演示数据;你的真实数据在云同步/本地) ============
 const SEED=[
- {date:"260702",name:"益生股份",code:"sz002458",cost:9.4,qty:1300,hold:"是",strat:"小市值"},
- {date:"260701",name:"中矿资源",code:"sz002738",cost:64.88,qty:200,hold:"是",strat:"小市值"},
- {date:"260630",name:"浙江东日",code:"sh600113",cost:32.85,qty:300,hold:"是",strat:"小市值"},
- {date:"260629",name:"彤程新材",code:"sh603650",cost:94.41,qty:100,hold:"是",strat:"小市值"},
- {date:"260626",name:"祥鑫科技",code:"sz002965",cost:51.39,qty:200,hold:"是",strat:"小市值"},
- {date:"260625",name:"上海港湾",code:"sh605598",cost:42.1,qty:300,hold:"是",strat:"小市值"},
- {date:"260624",name:"新华制药",code:"sz000756",cost:14.63,qty:800,hold:"是",strat:"小市值"},
- {date:"260618",name:"中京电子",code:"sz002579",cost:20.064,qty:500,hold:"是",strat:"小市值"},
- {date:"260611",name:"康强电子",code:"sz002119",cost:30.65,qty:400,hold:"是",strat:"小市值"},
- {date:"260526",name:"首开股份",code:"sh600376",cost:5.2,qty:2400,hold:"持有-不执行",strat:"小市值"},
- {date:"260521",name:"市北高新",code:"sh600604",cost:5.92,qty:2100,hold:"持有-不执行",strat:"小市值"},
- {date:"260518",name:"粤传媒",code:"sz002181",cost:21.64,qty:600,hold:"持有-不执行",strat:"小市值"},
- {date:"260703",name:"招金黄金",code:"sz000506",cost:13.76,qty:900,hold:"是",strat:"小市值"}
+ {date:"260703",name:"示例-贵州茅台",code:"sh600519",cost:1500,qty:100,hold:"是",strat:"大市值"},
+ {date:"260702",name:"示例-京东方A",code:"sz000725",cost:5.0,qty:2000,hold:"是",strat:"小市值"},
+ {date:"260630",name:"示例-中国平安",code:"sh601318",cost:50.0,qty:400,hold:"持有-不执行",strat:"小市值"}
 ];
 
 // ============ 数据存取 ============
