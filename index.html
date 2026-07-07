@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="股票助手">
 <title>A股双策略助手</title>
-<!-- build: two-tier high-warn v3 -->
+<!-- build: cloud-sync + high-warn v2 -->
 <style>
   :root{
     --bg:#0f1115; --card:#1a1d24; --card2:#22262f; --line:#2c313c;
@@ -153,14 +153,19 @@
   <div class="sheet">
     <h3 id="m-title">记一笔买入</h3>
     <input type="hidden" id="f-idx">
-    <label>股票名称</label>
-    <input id="f-name" placeholder="如 恒立液压">
     <label>股票代码(如 sh601100 / sz000506)</label>
-    <input id="f-code" placeholder="sh或sz+6位数字">
-    <label>成本价(元)</label>
-    <input id="f-cost" type="number" inputmode="decimal" placeholder="如 121.66">
+    <input id="f-code" placeholder="sh或sz+6位数字,输完自动带出名称/现价" oninput="onCodeInput()">
+    <label>股票名称 <span class="hint" id="nm-auto"></span></label>
+    <input id="f-name" placeholder="输代码后自动填,可改">
+    <label>成本价(元) <span class="hint" id="px-auto"></span></label>
+    <input id="f-cost" type="number" inputmode="decimal" placeholder="自动填现价,按实际成交价改">
     <label>持股数量(股,1手=100股)</label>
     <input id="f-qty" type="number" inputmode="numeric" placeholder="如 200">
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button type="button" class="btn sm gray" style="flex:1" onclick="qtyByAmount(20000)">按2万算</button>
+      <button type="button" class="btn sm gray" style="flex:1" onclick="qtyByAmount(30000)">3万</button>
+      <button type="button" class="btn sm gray" style="flex:1" onclick="qtyByAmount(50000)">5万</button>
+    </div>
     <label>买入日期(YYMMDD,如 260706)</label>
     <input id="f-date" inputmode="numeric" placeholder="260706">
     <label>用哪套策略买入?</label>
@@ -424,10 +429,48 @@ function renderMng(){
 }
 
 // ============ 弹窗 ============
+// 输入代码后自动带出名称+现价(复用腾讯行情接口)
+let _codeTimer=null;
+function onCodeInput(){
+  const code=document.getElementById('f-code').value.trim().toLowerCase();
+  document.getElementById('nm-auto').textContent='';
+  document.getElementById('px-auto').textContent='';
+  if(!/^(sh|sz)\d{6}$/.test(code)) return;
+  clearTimeout(_codeTimer);
+  _codeTimer=setTimeout(async()=>{
+    document.getElementById('nm-auto').textContent='查询中…';
+    try{
+      const q=await fetchQuotes([code]); const x=q[code];
+      if(x&&x.name){
+        // 名称:若用户没手填过就自动填
+        const nm=document.getElementById('f-name');
+        if(!nm.value.trim()) nm.value=x.name;
+        document.getElementById('nm-auto').textContent='✓ '+x.name;
+        // 现价:若成本价空着就填现价(方便,实际成交价可改)
+        const cs=document.getElementById('f-cost');
+        if(!cs.value){ cs.value=x.price; }
+        document.getElementById('px-auto').textContent='现价'+x.price+'(点上方"按2万算"自动算股数)';
+      }else{
+        document.getElementById('nm-auto').textContent='未查到,手动填';
+      }
+    }catch(e){ document.getElementById('nm-auto').textContent='查询失败,手动填'; }
+  },400);
+}
+// 按投入金额算整百股(1手=100股)
+function qtyByAmount(amt){
+  const cost=parseFloat(document.getElementById('f-cost').value);
+  if(!cost||cost<=0){ alert('请先填成本价(输代码会自动带现价)'); return; }
+  const shares=Math.floor(amt/cost/100)*100;
+  if(shares<=0){ alert('该价位'+amt+'元买不到1手'); return; }
+  document.getElementById('f-qty').value=shares;
+  document.getElementById('px-auto').textContent=`≈${amt}元→${shares}股(实际${(shares*cost).toFixed(0)}元)`;
+}
 function openAdd(){
   document.getElementById('m-title').textContent='记一笔买入';
   document.getElementById('f-idx').value='';
   ['f-name','f-code','f-cost','f-qty'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('nm-auto').textContent='';
+  document.getElementById('px-auto').textContent='';
   // 默认日期=今天
   const d=new Date(); const ymd=String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
   document.getElementById('f-date').value=ymd;
@@ -448,6 +491,8 @@ function openEdit(key){
   document.getElementById('f-cost').value=t.cost;
   document.getElementById('f-qty').value=t.qty;
   document.getElementById('f-date').value=t.date;
+  document.getElementById('nm-auto').textContent='';
+  document.getElementById('px-auto').textContent='';
   document.querySelector(`input[name=strat][value="${t.strat||'小市值'}"]`).checked=true;
   // 已了结的记录没有对应的hold单选项,默认高亮"是"(改回即撤销了结)
   const holdRadio=document.querySelector(`input[name=hold][value="${t.hold}"]`);
