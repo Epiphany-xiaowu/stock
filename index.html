@@ -132,7 +132,12 @@
   <!-- 管理页 -->
   <!-- 明日选股页 -->
   <div id="tab-pick" style="display:none">
-    <div id="pick-body"><div class="empty">点下方"算明日选股"获取收盘后候选</div></div>
+    <div class="sortbar">
+      <span class="sort-lb">视角</span>
+      <button class="sortb on" data-pm="overnight" onclick="setPickMode('overnight')">隔日(收盘后选)</button>
+      <button class="sortb" data-pm="live" onclick="setPickMode('live')">盘中实时</button>
+    </div>
+    <div id="pick-body"><div class="empty">点下方"算明日选股"获取候选</div></div>
     <div class="ts" id="pick-ts"></div>
   </div>
   <div id="tab-mng" style="display:none">
@@ -1007,11 +1012,22 @@ function scoreBadge(s){
   return {ic:'🔴🔴',lb:'差·避开',col:'var(--crit)'};
 }
 async function pickStocks(){
-  document.getElementById('pick-body').innerHTML='<div class="empty">加载中…(拉涨停池+算行情强度)</div>';
+  const mode=localStorage.getItem('pickmode')||'overnight';
+  const live=(mode==='live');
+  document.getElementById('pick-body').innerHTML='<div class="empty">加载中…('+(live?'盘中实时涨停快照':'拉涨停池')+'+算行情强度)</div>';
   let ymd,pool;
-  try{ ({ymd,pool}=await recentZTDate()); }
+  try{
+    if(live){
+      // 盘中实时:取今天涨停池(盘中动态更新)
+      const now=new Date();
+      ymd=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+      pool=await fetchZTPool(ymd);
+    }else{
+      ({ymd,pool}=await recentZTDate());
+    }
+  }
   catch(e){ document.getElementById('pick-body').innerHTML='<div class="empty">涨停池获取失败(可能网络/内网限制,换手机流量试试)</div>'; return; }
-  if(!ymd){ document.getElementById('pick-body').innerHTML='<div class="empty">近一周无涨停数据</div>'; return; }
+  if(!ymd||!pool||!pool.length){ document.getElementById('pick-body').innerHTML='<div class="empty">'+(live?'当前无涨停数据(可能非交易时段或今日尚无涨停)':'近一周无涨停数据')+'</div>'; return; }
   let fb=pool.filter(x=>x.lbc===1 && isMainboard(x.c) && x.ltsz>=100e8);
   fb.sort((a,b)=>b.ltsz-a.ltsz);
   const heldBig=new Set(TRADES.filter(t=>t.hold==='是'&&(t.strat||'')==='大市值').map(t=>t.code.slice(-6)));
@@ -1022,22 +1038,24 @@ async function pickStocks(){
   if(ms){
     msBanner=`<div class="card" style="border-color:${ms.color};margin-bottom:8px"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:17px;font-weight:700;color:${ms.color}">${ms.level}</span><span style="font-size:12px;color:var(--sub)">大盘强度 ${ms.score}/${ms.max} (${(ms.pct*100).toFixed(0)}%)</span></div><div style="font-size:12px;color:var(--sub);margin-top:5px">${ms.detail}</div><div style="font-size:12.5px;color:${ms.color};margin-top:5px">👉 ${ms.advice}</div></div>`;
   }
-  let html=msBanner+`<div class="card" style="border-color:#2c313c">
+  const liveWarn = live? `<div class="card" style="border-color:var(--crit);background:rgba(255,77,79,.08);margin-bottom:8px"><div style="font-size:12px;color:#ff8f8f;line-height:1.6">⚡ <b>盘中实时视角</b>:涨停池为<b>动态快照</b>会随盘变化(炸板/尾盘封板);此为<b>盘中打板参考,非隔日策略、无回测支撑</b>;龙虎榜盘后才有。</div></div>` : '';
+  let html=msBanner+liveWarn+`<div class="card" style="border-color:#2c313c">
     <div style="font-size:13px;color:var(--sub);line-height:1.7">
-    📅 涨停日 <b style="color:var(--txt)">${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}</b>(明日买入日基准)<br>
+    📅 ${live?'今日涨停(实时)':'涨停日'} <b style="color:var(--txt)">${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}</b>${live?'(盘中快照)':'(明日买入日基准)'}<br>
     📈 ${envTxt||'指数获取失败'}<br>
-    🎯 涨停${pool.length}只 → 主板首板+流通市值≥100亿 <b style="color:var(--txt)">${fb.length}</b>只</div></div>`;
-  if(fb.length===0){ html+='<div class="empty">今日无符合条件的大市值首板</div>';
+    🎯 ${live?'实时':''}涨停${pool.length}只 → 主板首板+流通市值≥100亿 <b style="color:var(--txt)">${fb.length}</b>只</div></div>`;
+  if(fb.length===0){ html+='<div class="empty">'+(live?'当前暂无符合条件的大市值首板(盘中会变)':'今日无符合条件的大市值首板')+'</div>';
     document.getElementById('pick-body').innerHTML=html;
     document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN'); return; }
   let topIdx=fb.findIndex(x=>!heldBig.has(String(x.c).padStart(6,'0')));
   if(topIdx<0) topIdx=0;
   html+='<!--RANK-->';   // 今日推荐排序卡占位,循环后回填
   // 高位警示:拉候选票前复权日K,算前20/60日涨幅(口径见项目总结)
-  document.getElementById('pick-body').innerHTML=html+'<div class="empty">正在检测各候选前期涨幅+龙虎榜资金面…</div>';
+  document.getElementById('pick-body').innerHTML=html+'<div class="empty">正在检测各候选前期涨幅'+(live?'(盘中无龙虎榜)':'+龙虎榜资金面')+'…</div>';
   const hiMap=await computeHighWarn(fb);
-  const lhbRes=await computeLhb(fb,lhbDate(ymd));   // 龙虎榜:涨停日基准,内部自动回退到最近已发布日
-  const lhbMap=lhbRes.map, lhbDay=lhbRes.day;
+  let lhbMap={},lhbDay=null;
+  if(live){ fb.forEach((x,i)=>lhbMap[i]={live:true}); }   // 盘中跳过龙虎榜
+  else { const lhbRes=await computeLhb(fb,lhbDate(ymd)); lhbMap=lhbRes.map; lhbDay=lhbRes.day; }
   const rankList=[];   // 收集综合评分,循环后做"今日推荐排序"
   fb.forEach((x,i)=>{
     const c=String(x.c).padStart(6,'0');
@@ -1076,7 +1094,9 @@ async function pickStocks(){
     // 龙虎榜资金面
     const lhb=lhbMap[i]; let lhbLine='';
     if(lhb){
-      if(lhb.noDate){
+      if(lhb.live){
+        lhbLine=`<div style="font-size:11px;color:var(--sub);margin-top:3px">🐟龙虎榜 盘中无(盘后约18-19点更新)</div>`;
+      }else if(lhb.noDate){
         lhbLine=`<div style="font-size:11px;color:var(--sub);margin-top:3px">🐟龙虎榜 暂未发布(盘后约18-19点更新)</div>`;
       }else if(lhb.err){
         lhbLine=`<div style="font-size:11px;color:var(--sub);margin-top:3px">🐟龙虎榜 获取失败(内网可能拦,换流量)</div>`;
@@ -1111,10 +1131,17 @@ async function pickStocks(){
       const zt=(x.p/1e3);
       const hi9=(zt*1.09).toFixed(2);
       const topWarn = (hi&&hi.hot)? `<br>⚠️ 但该票前期已大涨(高位),追高胜率低,可考虑跳过顺延下一只`:'';
-      html+=`<div class="act crit" style="margin-top:8px">
+      if(live){
+        html+=`<div class="act crit" style="margin-top:8px">
+        ⭐实时市值最大 · 盘中打板参考(非隔日策略)<br>
+        ⚠️ 盘中快照会变,可能炸板;此为观察非推荐,追高需谨慎<br>
+        如要做仍标【大市值】走10%止损/30天${topWarn}</div>`;
+      }else{
+        html+=`<div class="act crit" style="margin-top:8px">
         ⭐明日首选 · 9:20-9:24竞价挂开盘价买2万<br>
         昨涨停价约${zt.toFixed(2)} · 竞价高开>9%(≈${hi9})则放弃<br>
         买入后标【大市值】,走10%止损/30天${topWarn}</div>`;
+      }
     }
     html+='</div>';
   });
@@ -1142,7 +1169,13 @@ async function pickStocks(){
     🏆 综合评分=龙虎榜净买(±)+高位(-)+封板(±)+危险形态(-),均为已验证因子;⭐首选仍按市值不受评分影响,评分权重人为设定未组合回测,仅辅助排序。<br>
     ⚠️ 三年回测该策略仅+1.2%/笔、胜率32%,强周期(牛市赚熊市亏),小仓位博弈,不构成投资建议。</div>`;
   document.getElementById('pick-body').innerHTML=html;
-  document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN')+' · 数据源东财涨停池';
+  document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN')+' · 数据源东财涨停池'+(live?' · 盘中实时快照':'');
+}
+// 切换 隔日/盘中实时 视角
+function setPickMode(m){
+  localStorage.setItem('pickmode',m);
+  document.querySelectorAll('.sortb[data-pm]').forEach(b=>b.classList.toggle('on',b.dataset.pm===m));
+  pickStocks();
 }
 
 // ============ Tab切换 ============
@@ -1160,7 +1193,9 @@ function switchTab(t){
 // 初始
 renderMng();
 // 恢复排序按钮高亮
-document.querySelectorAll('.sortb').forEach(b=>b.classList.toggle('on',b.dataset.sort===SORT));
+document.querySelectorAll('.sortb[data-sort]').forEach(b=>b.classList.toggle('on',b.dataset.sort===SORT));
+// 恢复选股视角(隔日/盘中实时)高亮
+(function(){const pm=localStorage.getItem('pickmode')||'overnight';document.querySelectorAll('.sortb[data-pm]').forEach(b=>b.classList.toggle('on',b.dataset.pm===pm));})();
 // 恢复自动刷新设置
 let autoStarted=false;
 if(localStorage.getItem('autoref')==='1'){
