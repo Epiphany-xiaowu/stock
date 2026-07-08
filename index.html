@@ -241,7 +241,7 @@ if(localStorage.getItem(LOCK_KEY)==='1'){
 
 // ============ 策略参数(与电脑skill一致) ============
 const PARAMS={'大市值':{SL:0.10,H:30},'小市值':{SL:0.06,H:25}};
-const EARLY_DAYS=3, CRIT=0.01;
+const CRIT=0.01;
 const INDEX={sh000001:'上证',sz399001:'深证',sz399006:'创业板'};
 let SORT=localStorage.getItem('sortmode')||'prio';   // 排序方式
 let LASTQ=null;                                       // 缓存最近一次行情,切排序免重拉
@@ -338,13 +338,12 @@ function judge(t,q){
   }
   const broke = pnl<=-p.SL;
   const expire = td>=p.H;
-  const early = td<=EARLY_DAYS;
   let cls='hold', txt='持有', tags=[];
   if(broke||expire){
     const reason = broke? `破止损-${(p.SL*100).toFixed(0)}%` : `满${p.H}天到期`;
+    // 卖出时点:默认当日尾盘卖(回测证尾盘优于次日开盘);仅跌停相关例外
     if(isLimit){ cls='crit'; txt='🚨已跌停·次日开盘必抛'; }
     else if(nearLimit&&broke){ cls='crit'; txt='🚨盘中立即卖(濒临跌停抢流动性)'; }
-    else if(broke&&early){ cls='sell'; txt='⚡次日开盘卖(买入初期即深跌)'; }
     else { cls='sell'; txt='⚠️今日尾盘卖出'; }
     tags.push(reason);
   } else {
@@ -1120,7 +1119,7 @@ async function pickStocks(){
     // 综合评分(市值不参与,仅辅助因子)
     const sc=scoreOf(hi,lhb,zb);
     const bg=scoreBadge(sc.score);
-    rankList.push({name:x.n,code:c,score:sc.score,tags:sc.tags,isTop,cir:+cir});
+    rankList.push({name:x.n,code:c,score:sc.score,tags:sc.tags,isTop,cir:+cir,hot:!!(hi&&hi.hot)});
     const scoreLine=`<div style="font-size:11px;margin-top:4px;color:${bg.col};font-weight:600">综合 ${bg.ic} ${sc.score>=0?'+':''}${sc.score}分·${bg.lb}${sc.tags.length?' <span style="font-weight:400;color:var(--sub)">'+sc.tags.join(' ')+'</span>':''}</div>`;
     html+=`<div class="card" style="${isTop?'border-color:var(--big)':''}">
       <div class="row1"><div><span style="font-size:13px">${star}</span><span class="nm">${x.n}</span><span class="cd">${c}</span> ${heldTag}${hiTag}</div>
@@ -1145,20 +1144,21 @@ async function pickStocks(){
     }
     html+='</div>';
   });
-  // 今日推荐排序卡:按综合分降序,同分市值大者优先
-  const ranked=[...rankList].sort((a,b)=> (b.score-a.score) || (b.cir-a.cir));
+  // 今日推荐排序卡:严格按策略铁律=流通市值降序(市值是三年回测最强因子);
+  // ⚠️高位票沉底(回测该档均收-3%、胜率19%,亏损档);综合分仅作参考列不主导排序。
+  const ranked=[...rankList].sort((a,b)=> (a.hot-b.hot) || (b.cir-a.cir));
   const top=ranked.slice(0,5);
   let rankCard=`<div class="card" style="border-color:var(--big);margin-bottom:8px">
-    <div style="font-size:13px;font-weight:700;color:var(--big);margin-bottom:6px">🏆 今日推荐排序(综合评分)</div>`;
+    <div style="font-size:13px;font-weight:700;color:var(--big);margin-bottom:6px">🏆 今日推荐排序(流通市值)</div>`;
   top.forEach((r,idx)=>{
-    const bg=scoreBadge(r.score);
     const starMark=r.isTop?'⭐':'';
+    const hotMark=r.hot?' <span style="color:var(--crit);font-size:10px;font-weight:600">⚠️高位</span>':'';
     rankCard+=`<div style="font-size:12px;margin:3px 0;color:var(--txt)">
-      <b>${idx+1}.</b> ${r.name}${starMark} <span class="cd">${r.code}</span>
-      <span style="color:${bg.col};font-weight:600">${r.score>=0?'+':''}${r.score}分</span>
-      <span style="color:var(--sub);font-size:11px"> ${r.cir}亿 · ${r.tags.join(' ')||'—'}</span></div>`;
+      <b>${idx+1}.</b> ${r.name}${starMark}${hotMark} <span class="cd">${r.code}</span>
+      <span style="color:var(--big);font-weight:600">${r.cir}亿</span>
+      <span style="color:var(--sub);font-size:11px"> · 综合${r.score>=0?'+':''}${r.score}分 ${r.tags.join(' ')||'—'}</span></div>`;
   });
-  rankCard+=`<div style="font-size:10px;color:var(--sub);margin-top:6px">⭐=市值首选(仍按市值);本排序综合已验证辅助因子,权重人为设定未组合回测,仅辅助参考</div></div>`;
+  rankCard+=`<div style="font-size:10px;color:var(--sub);margin-top:6px">按<b>流通市值</b>降序=策略铁律(市值是三年回测最强因子);⭐=市值首选(未持仓中最大);⚠️高位票已沉底(回测亏损档);综合分仅参考,权重人为设定未组合回测。</div></div>`;
   html=html.replace('<!--RANK-->',rankCard);
   html+=`<div class="note">
     📊 每天买流通市值最大的未持仓主板首板(⭐)。✋=你已持仓(自动顺延)。<br>
