@@ -1046,8 +1046,6 @@ async function pickStocks(){
   if(fb.length===0){ html+='<div class="empty">'+(live?'当前暂无符合条件的大市值首板(盘中会变)':'今日无符合条件的大市值首板')+'</div>';
     document.getElementById('pick-body').innerHTML=html;
     document.getElementById('pick-ts').textContent='算于 '+new Date().toLocaleString('zh-CN'); return; }
-  let topIdx=fb.findIndex(x=>!heldBig.has(String(x.c).padStart(6,'0')));
-  if(topIdx<0) topIdx=0;
   html+='<!--RANK-->';   // 今日推荐排序卡占位,循环后回填
   // 高位警示:拉候选票前复权日K,算前20/60日涨幅(口径见项目总结)
   document.getElementById('pick-body').innerHTML=html+'<div class="empty">正在检测各候选前期涨幅'+(live?'(盘中无龙虎榜)':'+龙虎榜资金面')+'…</div>';
@@ -1056,13 +1054,25 @@ async function pickStocks(){
   if(live){ fb.forEach((x,i)=>lhbMap[i]={live:true}); }   // 盘中跳过龙虎榜
   else { const lhbRes=await computeLhb(fb,lhbDate(ymd)); lhbMap=lhbRes.map; lhbDay=lhbRes.day; }
   const rankList=[];   // 收集综合评分,循环后做"今日推荐排序"
+  // 计算今日首选 pickIdx:市值为主,但命中硬伤(高位/疑出货/封板极差)沉底,取最优者
+  function candTier(i){
+    const x=fb[i]; const c=String(x.c).padStart(6,'0');
+    if(heldBig.has(c)) return 9;                          // 已持仓不选
+    const hi=hiMap[i]; const lhb=lhbMap[i]; const zb=x.zbc||0;
+    if(hi&&hi.hot) return 3;                              // 高位(回测亏损档)
+    if(lhb&&lhb.onList&&(lhb.north<=-3e7||lhb.inst<=-3e7)) return 2; // 疑出货
+    if(x.fbt>=143000&&zb>=2) return 1;                    // 封板极差(尾盘才封+多炸)
+    return 0;                                             // 干净
+  }
+  let pickIdx=0, bestT=99;
+  fb.forEach((x,i)=>{ const t=candTier(i); if(t<bestT){ bestT=t; pickIdx=i; } });  // fb已按市值降序,同档取最大
   fb.forEach((x,i)=>{
     const c=String(x.c).padStart(6,'0');
     const cir=(x.ltsz/1e8).toFixed(0);
     const zb=x.zbc||0;
     const quality = zb===0?'🟢果断':(zb<=2?`🟡${zb}炸`:`🔴${zb}炸`);
     const held=heldBig.has(c);
-    const isTop=(i===topIdx);
+    const isTop=(i===pickIdx);
     const star=isTop?'⭐':(held?'✋':'　');
     const heldTag=held?'<span style="color:var(--warn);font-size:11px">已持仓</span>':'';
     // 高位警示标签
@@ -1119,7 +1129,11 @@ async function pickStocks(){
     // 综合评分(市值不参与,仅辅助因子)
     const sc=scoreOf(hi,lhb,zb);
     const bg=scoreBadge(sc.score);
-    rankList.push({name:x.n,code:c,score:sc.score,tags:sc.tags,isTop,cir:+cir,hot:!!(hi&&hi.hot)});
+    // 负面因子(用于排序沉底):疑出货 / 封板极差(尾盘才封+多次炸板)
+    const dump = !!(lhb && lhb.onList && (lhb.north<=-3e7 || lhb.inst<=-3e7));
+    const lateSeal = (x.fbt>=143000) && (zb>=2);   // 首封≥14:30 且 ≥2炸
+    rankList.push({name:x.n,code:c,score:sc.score,tags:sc.tags,isTop,cir:+cir,
+                   hot:!!(hi&&hi.hot), dump, lateSeal, fbt:x.fbt, zb});
     const scoreLine=`<div style="font-size:11px;margin-top:4px;color:${bg.col};font-weight:600">综合 ${bg.ic} ${sc.score>=0?'+':''}${sc.score}分·${bg.lb}${sc.tags.length?' <span style="font-weight:400;color:var(--sub)">'+sc.tags.join(' ')+'</span>':''}</div>`;
     html+=`<div class="card" style="${isTop?'border-color:var(--big)':''}">
       <div class="row1"><div><span style="font-size:13px">${star}</span><span class="nm">${x.n}</span><span class="cd">${c}</span> ${heldTag}${hiTag}</div>
@@ -1144,21 +1158,34 @@ async function pickStocks(){
     }
     html+='</div>';
   });
-  // 今日推荐排序卡:严格按策略铁律=流通市值降序(市值是三年回测最强因子);
-  // ⚠️高位票沉底(回测该档均收-3%、胜率19%,亏损档);综合分仅作参考列不主导排序。
-  const ranked=[...rankList].sort((a,b)=> (a.hot-b.hot) || (b.cir-a.cir));
+  // 今日推荐排序卡:市值为主(三年回测最强因子),但命中"明确负面因子"的票分级沉底,
+  // 使排序=真实推荐序(首选=市值靠前且干净的票,不再让有硬伤的大市值票占第一)。
+  // 沉底档(tier越大越靠后):0=干净 / 1=封板极差(尾盘才封+多炸) / 2=疑出货 / 3=高位(回测亏损档)
+  function tierOf(r){ if(r.hot) return 3; if(r.dump) return 2; if(r.lateSeal) return 1; return 0; }
+  const ranked=[...rankList].sort((a,b)=> (tierOf(a)-tierOf(b)) || (b.cir-a.cir));
   const top=ranked.slice(0,5);
+  // 真正首选=候选卡里标⭐的那只(isTop=pickIdx,与排序同一分级逻辑)
+  const pickCode = (rankList.find(r=>r.isTop)||ranked[0]||{}).code;
+  // 每票一句推荐/排除理由
+  function reasonOf(r,isPick){
+    if(r.hot) return {txt:'⚠️高位·回测亏损档,避开',col:'var(--crit)'};
+    if(r.dump) return {txt:'⚠️龙虎榜疑出货,让位',col:'var(--crit)'};
+    if(r.lateSeal) return {txt:`⚠️尾盘${fmtFbt(r.fbt)}才封+${r.zb}炸·资金犹豫,让位`,col:'var(--warn)'};
+    if(isPick) return {txt:'✅市值靠前+封板果断+无硬伤,首选',col:'var(--up)'};
+    return {txt:'干净候选,可备选',col:'var(--sub)'};
+  }
   let rankCard=`<div class="card" style="border-color:var(--big);margin-bottom:8px">
-    <div style="font-size:13px;font-weight:700;color:var(--big);margin-bottom:6px">🏆 今日推荐排序(流通市值)</div>`;
+    <div style="font-size:13px;font-weight:700;color:var(--big);margin-bottom:6px">🏆 今日推荐排序(市值为主·硬伤沉底)</div>`;
   top.forEach((r,idx)=>{
-    const starMark=r.isTop?'⭐':'';
-    const hotMark=r.hot?' <span style="color:var(--crit);font-size:10px;font-weight:600">⚠️高位</span>':'';
-    rankCard+=`<div style="font-size:12px;margin:3px 0;color:var(--txt)">
-      <b>${idx+1}.</b> ${r.name}${starMark}${hotMark} <span class="cd">${r.code}</span>
+    const isPick=(r.code===pickCode);
+    const starMark=isPick?'⭐':'';
+    const rs=reasonOf(r,isPick);
+    rankCard+=`<div style="font-size:12px;margin:4px 0;color:var(--txt)">
+      <b>${idx+1}.</b> ${r.name}${starMark} <span class="cd">${r.code}</span>
       <span style="color:var(--big);font-weight:600">${r.cir}亿</span>
-      <span style="color:var(--sub);font-size:11px"> · 综合${r.score>=0?'+':''}${r.score}分 ${r.tags.join(' ')||'—'}</span></div>`;
+      <div style="font-size:11px;color:${rs.col};margin-top:1px">${rs.txt}<span style="color:var(--sub)"> · 综合${r.score>=0?'+':''}${r.score}分</span></div></div>`;
   });
-  rankCard+=`<div style="font-size:10px;color:var(--sub);margin-top:6px">按<b>流通市值</b>降序=策略铁律(市值是三年回测最强因子);⭐=市值首选(未持仓中最大);⚠️高位票已沉底(回测亏损档);综合分仅参考,权重人为设定未组合回测。</div></div>`;
+  rankCard+=`<div style="font-size:10px;color:var(--sub);margin-top:6px">⭐=今日首选(排序第一)。排序:市值降序为主(三年回测最强因子),但命中硬伤者沉底——高位(回测亏损档)>疑出货>封板极差(尾盘才封+多炸)。综合分仅参考,权重人为设定未组合回测。</div></div>`;
   html=html.replace('<!--RANK-->',rankCard);
   html+=`<div class="note">
     📊 每天买流通市值最大的未持仓主板首板(⭐)。✋=你已持仓(自动顺延)。<br>
