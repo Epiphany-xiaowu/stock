@@ -394,12 +394,16 @@ function renderMon(q){
       const pnlTxt = j.pnl===null?'—':`${j.pnl>=0?'+':''}${(j.pnl*100).toFixed(1)}%`;
       const pnlCol = j.pnl===null?'var(--sub)':(j.pnl>=0?'var(--up)':'var(--down)');
       const px = q[t.code]?q[t.code].price.toFixed(2):'—';
-      // 当日涨幅(现价/昨收-1),红涨绿跌
+      // 当日涨幅(现价/昨收-1),红涨绿跌;并算当日盈亏金额=(现价-昨收)*股数
       let dayTxt='';
       if(q[t.code]&&q[t.code].prev>0){
         const dc=q[t.code].price/q[t.code].prev-1;
         const dCol=dc>=0?'var(--up)':'var(--down)';
         dayTxt=` · 今日<b style="color:${dCol}">${dc>=0?'+':''}${(dc*100).toFixed(1)}%</b>`;
+        if(t.qty>0){
+          const dayPnl=(q[t.code].price-q[t.code].prev)*t.qty;
+          dayTxt+=` <b style="color:${dCol}">${dayPnl>=0?'+':''}${Math.round(dayPnl).toLocaleString()}元</b>`;
+        }
       }
       const actTxt = (j.txt||'') + (j.tags&&j.tags.length?'  '+j.tags.join(' '):'');
       html+=`<div class="card" onclick="openEdit('${t.code}_${t.date}')">
