@@ -1218,12 +1218,12 @@ async function pickStocks(){
     // 负面因子(用于排序沉底):疑出货 / 封板极差(尾盘才封+多次炸板)
     const dump = !!(lhb && lhb.onList && (lhb.north<=-3e7 || lhb.inst<=-3e7));
     const lateSeal = (x.fbt>=143000) && (zb>=2);   // 首封≥14:30 且 ≥2炸
-    rankList.push({name:x.n,code:c,score:sc.score,tags:sc.tags,isTop,cir:+cir,
+    rankList.push({name:x.n,code:c,score:sc.score,tags:sc.tags,isTop,cir:+cir,price:x.p/1e3,
                    hot:!!(hi&&hi.hot), dump, lateSeal, fbt:x.fbt, zb});
     const scoreLine=`<div style="font-size:11px;margin-top:4px;color:${bg.col};font-weight:600">综合 ${bg.ic} ${sc.score>=0?'+':''}${sc.score}分·${bg.lb}${sc.tags.length?' <span style="font-weight:400;color:var(--sub)">'+sc.tags.join(' ')+'</span>':''}</div>`;
     html+=`<div class="card" style="${isTop?'border-color:var(--big)':''}">
       <div class="row1"><div><span style="font-size:13px">${star}</span><span class="nm">${x.n}</span><span class="cd">${c}</span> ${heldTag}${hiTag}</div>
-        <div style="font-size:13px;color:var(--big);font-weight:600">${cir}亿</div></div>${scoreLine}
+        <div style="font-size:13px;color:var(--big);font-weight:600">${(x.p/1e3).toFixed(2)}元 · ${cir}亿</div></div>${scoreLine}
       <div class="row2"><span>封板 <b>${quality}</b> · 首封${fmtFbt(x.fbt)}</span>
         <span>${x.hybk||''}</span></div>${hiLine}${patLine}${lhbLine}`;
     if(isTop){
@@ -1268,7 +1268,7 @@ async function pickStocks(){
     const rs=reasonOf(r,isPick);
     rankCard+=`<div style="font-size:12px;margin:4px 0;color:var(--txt)">
       <b>${idx+1}.</b> ${r.name}${starMark} <span class="cd">${r.code}</span>
-      <span style="color:var(--big);font-weight:600">${r.cir}亿</span>
+      <span style="color:var(--big);font-weight:600">${r.price.toFixed(2)}元 · ${r.cir}亿</span>${(20000/r.price<100)?'<span style="color:var(--warn);font-size:10px">⚠️2万买不满1手</span>':''}
       <div style="font-size:11px;color:${rs.col};margin-top:1px">${rs.txt}<span style="color:var(--sub)"> · 综合${r.score>=0?'+':''}${r.score}分</span></div></div>`;
   });
   rankCard+=`<div style="font-size:10px;color:var(--sub);margin-top:6px">⭐=今日首选(排序第一)。排序:市值降序为主(三年回测最强因子),但命中硬伤者沉底——高位(回测亏损档)>疑出货>封板极差(尾盘才封+多炸)。综合分仅参考,权重人为设定未组合回测。</div></div>`;
