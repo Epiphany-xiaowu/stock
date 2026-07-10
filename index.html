@@ -377,6 +377,7 @@ function renderMon(q){
   document.getElementById('env').textContent = envTxt||'大盘环境获取失败';
   const order={crit:0,sell:1,warn:2,hold:3,noexec:4};
   let html='';
+  let totalDayPnl=0, hasDayPnl=false;   // 今日总盈亏(账户口径)
   for(const strat of ['大市值','小市值']){
     const grp=held.filter(t=>(t.strat||'小市值')===strat);
     if(grp.length===0) continue;
@@ -394,15 +395,19 @@ function renderMon(q){
       const pnlTxt = j.pnl===null?'—':`${j.pnl>=0?'+':''}${(j.pnl*100).toFixed(1)}%`;
       const pnlCol = j.pnl===null?'var(--sub)':(j.pnl>=0?'var(--up)':'var(--down)');
       const px = q[t.code]?q[t.code].price.toFixed(2):'—';
-      // 当日涨幅(现价/昨收-1),红涨绿跌;并算当日盈亏金额=(现价-昨收)*股数
+      // 当日涨幅=股票当日表现(现价/昨收-1);当日盈亏金额=账户口径:
+      //   当天买入(持仓0天)用成本价算(昨收→成本那段不是你的收益),往日持仓用昨收算
       let dayTxt='';
       if(q[t.code]&&q[t.code].prev>0){
         const dc=q[t.code].price/q[t.code].prev-1;
         const dCol=dc>=0?'var(--up)':'var(--down)';
         dayTxt=` · 今日<b style="color:${dCol}">${dc>=0?'+':''}${(dc*100).toFixed(1)}%</b>`;
         if(t.qty>0){
-          const dayPnl=(q[t.code].price-q[t.code].prev)*t.qty;
-          dayTxt+=` <b style="color:${dCol}">${dayPnl>=0?'+':''}${Math.round(dayPnl).toLocaleString()}元</b>`;
+          const base=(j.td===0)? t.cost : q[t.code].prev;   // 当天买入用成本
+          const dayPnl=(q[t.code].price-base)*t.qty;
+          totalDayPnl+=dayPnl; hasDayPnl=true;
+          const dpCol=dayPnl>=0?'var(--up)':'var(--down)';
+          dayTxt+=` <b style="color:${dpCol}">${dayPnl>=0?'+':''}${Math.round(dayPnl).toLocaleString()}元</b>${j.td===0?'<span style="color:var(--sub);font-size:10px">(按成本)</span>':''}`;
         }
       }
       const actTxt = (j.txt||'') + (j.tags&&j.tags.length?'  '+j.tags.join(' '):'');
@@ -416,7 +421,16 @@ function renderMon(q){
     }
     html+='</div>';
   }
-  document.getElementById('mon-body').innerHTML = html||'<div class="empty">暂无持仓,去"交易记录"记一笔</div>';
+  // 今日总盈亏汇总条(账户口径:当天买入按成本,往日持仓按昨收)
+  let sumBar='';
+  if(hasDayPnl){
+    const sCol=totalDayPnl>=0?'var(--up)':'var(--down)';
+    sumBar=`<div class="card" style="border-color:${sCol};margin-bottom:8px;text-align:center">
+      <span style="font-size:13px">📊 今日总盈亏 </span>
+      <b style="font-size:18px;color:${sCol}">${totalDayPnl>=0?'+':''}${Math.round(totalDayPnl).toLocaleString()}元</b>
+      <div style="font-size:10px;color:var(--sub);margin-top:2px">当天买入按成本价算,往日持仓按昨收算</div></div>`;
+  }
+  document.getElementById('mon-body').innerHTML = (sumBar+html)||'<div class="empty">暂无持仓,去"交易记录"记一笔</div>';
   runHoldingDiagnostics(held,q);   // 异步渐进填充诊断行(不阻塞主渲染)
 }
 
