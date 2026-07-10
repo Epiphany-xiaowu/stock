@@ -394,11 +394,18 @@ function renderMon(q){
       const pnlTxt = j.pnl===null?'—':`${j.pnl>=0?'+':''}${(j.pnl*100).toFixed(1)}%`;
       const pnlCol = j.pnl===null?'var(--sub)':(j.pnl>=0?'var(--up)':'var(--down)');
       const px = q[t.code]?q[t.code].price.toFixed(2):'—';
+      // 当日涨幅(现价/昨收-1),红涨绿跌
+      let dayTxt='';
+      if(q[t.code]&&q[t.code].prev>0){
+        const dc=q[t.code].price/q[t.code].prev-1;
+        const dCol=dc>=0?'var(--up)':'var(--down)';
+        dayTxt=` · 今日<b style="color:${dCol}">${dc>=0?'+':''}${(dc*100).toFixed(1)}%</b>`;
+      }
       const actTxt = (j.txt||'') + (j.tags&&j.tags.length?'  '+j.tags.join(' '):'');
       html+=`<div class="card" onclick="openEdit('${t.code}_${t.date}')">
         <div class="row1"><div><span class="nm">${t.name}</span><span class="cd">${t.code}</span></div>
           <div class="pnl" style="color:${pnlCol}">${pnlTxt}</div></div>
-        <div class="row2"><span>成本 <b>${t.cost}</b> · 现价 <b>${px}</b></span>
+        <div class="row2"><span>成本 <b>${t.cost}</b> · 现价 <b>${px}</b>${dayTxt}</span>
           <span>持仓约 <b>${j.td}</b> 天 ${j.stop?`· 止损价<b>${j.stop}</b>`:''}</span></div>
         <div class="act ${j.cls}">${actTxt}</div>
         <div class="diag" id="diag_${t.code}_${t.date}" style="font-size:11px;color:var(--sub);margin-top:5px;line-height:1.7"></div></div>`;
