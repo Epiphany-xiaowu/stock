@@ -1067,14 +1067,12 @@ async function marketStrength(){
 // 返回 {score, tags:[...加分/扣分理由]}
 function scoreOf(hi,lhb,zb){
   let s=0; const tags=[];
-  // 龙虎榜净买
+  // 龙虎榜(3年4290条回测:唯一真信号是"北向资金方向",机构/总净额是噪声)
+  //   北向净买>3千万 D10/D20/D30 全周期+2.5~3%;北向净卖<-3千万 全周期为负。
   if(lhb&&lhb.onList){
-    const dump=(lhb.north<=-3e7||lhb.inst<=-3e7);
-    const netYi=lhb.net/1e8;
-    if(dump){ s-=3; tags.push('主力疑出货-3'); }
-    else if(netYi>=0.5){ s+=2; tags.push('资金强+2'); }
-    else if(netYi>0){ s+=1; tags.push('净买入+1'); }
-    else if(netYi<0){ s-=1; tags.push('净卖出-1'); }
+    if(lhb.north<=-3e7){ s-=2; tags.push('北向净卖-2'); }        // 唯一稳的负信号
+    else if(lhb.north>=3e7){ s+=2; tags.push('北向净买+2'); }    // 唯一强的正信号
+    else if(lhb.net>0){ s+=0; }                                  // 机构/总净额=噪声,不加减
   }
   // 高位
   if(hi){
@@ -1146,7 +1144,7 @@ async function pickStocks(){
     if(heldBig.has(c)) return 9;                          // 已持仓不选
     const hi=hiMap[i]; const lhb=lhbMap[i]; const zb=x.zbc||0;
     if(hi&&hi.hot) return 3;                              // 高位(回测亏损档)
-    if(lhb&&lhb.onList&&(lhb.north<=-3e7||lhb.inst<=-3e7)) return 2; // 疑出货
+    if(lhb&&lhb.onList&&(lhb.north<=-3e7)) return 2; // 北向净卖(3年回测唯一稳的负信号)
     if(x.fbt>=143000&&zb>=2) return 1;                    // 封板极差(尾盘才封+多炸)
     return 0;                                             // 干净
   }
@@ -1203,20 +1201,18 @@ async function pickStocks(){
         const netCol=lhb.net>=0?'var(--up)':'var(--down)';
         const netYi=yi(lhb.net);
         // 建议(基于一年回测:大市值+涨停+净买入 次日胜率61%/D10+3.3%;净卖档次日约-1%)
-        const dump=(lhb.north<=-3e7||lhb.inst<=-3e7);
         let adv;
-        if(dump) adv=`<span style="color:var(--crit);font-weight:600">⚠️主力净卖·疑出货,避开</span>`;
-        else if(netYi>=0.5) adv=`<span style="color:var(--up);font-weight:600">✅大额净买·资金强(回测次日胜率61%)</span>`;
-        else if(netYi>0) adv=`<span style="color:var(--up)">净买入·偏多</span>`;
-        else adv=`<span style="color:var(--down)">净卖出·偏空(回测次日约-1%)</span>`;
+        if(lhb.north<=-3e7) adv=`<span style="color:var(--crit);font-weight:600">⚠️北向净卖·避雷(3年回测D30约-0.8%,唯一稳的负信号)</span>`;
+        else if(lhb.north>=3e7) adv=`<span style="color:var(--up);font-weight:600">✅北向净买·偏多(3年回测D20约+3%,唯一强正信号)</span>`;
+        else adv=`<span style="color:var(--sub)">机构/总净额=噪声(3年回测无区分力),仅北向方向有效</span>`;
         lhbLine=`<div style="font-size:11px;margin-top:3px">🐟龙虎榜 <span style="color:${netCol}">净${lhb.net>=0?'+':''}${netYi.toFixed(1)}亿</span>${seg('北向',lhb.north)}${seg('机构',lhb.inst)}<br><span style="margin-left:16px">${adv}</span></div>`;
       }
     }
     // 综合评分(市值不参与,仅辅助因子)
     const sc=scoreOf(hi,lhb,zb);
     const bg=scoreBadge(sc.score);
-    // 负面因子(用于排序沉底):疑出货 / 封板极差(尾盘才封+多次炸板)
-    const dump = !!(lhb && lhb.onList && (lhb.north<=-3e7 || lhb.inst<=-3e7));
+    // 负面因子(用于排序沉底):北向净卖 / 封板极差(尾盘才封+多次炸板)
+    const dump = !!(lhb && lhb.onList && (lhb.north<=-3e7));
     const lateSeal = (x.fbt>=143000) && (zb>=2);   // 首封≥14:30 且 ≥2炸
     rankList.push({name:x.n,code:c,score:sc.score,tags:sc.tags,isTop,cir:+cir,price:x.p/1e3,
                    hot:!!(hi&&hi.hot), dump, lateSeal, fbt:x.fbt, zb});
@@ -1255,7 +1251,7 @@ async function pickStocks(){
   // 每票一句推荐/排除理由
   function reasonOf(r,isPick){
     if(r.hot) return {txt:'⚠️高位·回测亏损档,避开',col:'var(--crit)'};
-    if(r.dump) return {txt:'⚠️龙虎榜疑出货,让位',col:'var(--crit)'};
+    if(r.dump) return {txt:'⚠️北向净卖,让位',col:'var(--crit)'};
     if(r.lateSeal) return {txt:`⚠️尾盘${fmtFbt(r.fbt)}才封+${r.zb}炸·资金犹豫,让位`,col:'var(--warn)'};
     if(isPick) return {txt:'✅市值靠前+封板果断+无硬伤,首选',col:'var(--up)'};
     return {txt:'干净候选,可备选',col:'var(--sub)'};
@@ -1271,7 +1267,7 @@ async function pickStocks(){
       <span style="color:var(--big);font-weight:600">${r.price.toFixed(2)}元 · ${r.cir}亿</span>${(20000/r.price<100)?'<span style="color:var(--warn);font-size:10px">⚠️2万买不满1手</span>':''}
       <div style="font-size:11px;color:${rs.col};margin-top:1px">${rs.txt}<span style="color:var(--sub)"> · 综合${r.score>=0?'+':''}${r.score}分</span></div></div>`;
   });
-  rankCard+=`<div style="font-size:10px;color:var(--sub);margin-top:6px">⭐=今日首选(排序第一)。排序:市值降序为主(三年回测最强因子),但命中硬伤者沉底——高位(回测亏损档)>疑出货>封板极差(尾盘才封+多炸)。综合分仅参考,权重人为设定未组合回测。</div></div>`;
+  rankCard+=`<div style="font-size:10px;color:var(--sub);margin-top:6px">⭐=今日首选(排序第一)。排序:市值降序为主(三年回测最强因子),但命中硬伤者沉底——高位(回测亏损档)>北向净卖(3年回测唯一稳的负信号)>封板极差(尾盘才封+多炸)。综合分仅参考,权重人为设定未组合回测。</div></div>`;
   html=html.replace('<!--RANK-->',rankCard);
   html+=`<div class="note">
     📊 每天买流通市值最大的未持仓主板首板(⭐)。✋=你已持仓(自动顺延)。<br>
