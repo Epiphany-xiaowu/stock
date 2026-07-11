@@ -924,19 +924,27 @@ async function fetchHotRank(){
     return HOTMAP;
   }catch(e){ HOTMAP={_err:1}; return HOTMAP; }   // 失败(内网可能拦)返回空,不影响主体
 }
-// 获取个股所属行业(东财,JSONP绕CORS);结果本地缓存30天,减少请求
+// 获取个股所属行业(同花顺 field.html,fetch+GBK解码,CORS开放内网可达);结果本地缓存30天,减少请求
+// 注:原用东财 push2 f127(JSONP),该行情接口内网时通时断→静默失败不显示;同花顺 basic.10jqka 稳定,且给完整三级申万分类
 const INDCACHE_KEY='stock_industry_cache';
 function loadIndCache(){ try{ return JSON.parse(localStorage.getItem(INDCACHE_KEY)||'{}'); }catch(e){ return {}; } }
 async function fetchIndustry(code){
   const cache=loadIndCache(); const c6=code.slice(-6);
   const hit=cache[c6];
   if(hit && (Date.now()-hit.t < 30*864e5)) return hit.v;   // 30天内直接用缓存
-  const secid=(code.startsWith('sh')?'1.':'0.')+c6;
   try{
-    const d=await jsonp(`https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f127`);
-    const ind=(d&&d.data&&d.data.f127)||'';
-    cache[c6]={v:ind,t:Date.now()}; localStorage.setItem(INDCACHE_KEY,JSON.stringify(cache));
-    return ind;
+    const resp=await fetch(`https://basic.10jqka.com.cn/${c6}/field.html`);
+    const buf=await resp.arrayBuffer();
+    const html=new TextDecoder('gbk').decode(buf);          // 同花顺返回GBK
+    // 结构: 三级行业分类：<span class="tip f14">国防军工 -- 航天装备Ⅱ -- 航天装备Ⅲ （共10家）
+    const m=html.match(/三级行业分类：<span[^>]*>([^（<]+)/);
+    let ind='';
+    if(m){
+      const parts=m[1].split('--').map(s=>s.trim()).filter(Boolean);
+      ind=parts.length>=2 ? parts[1] : (parts[0]||'');    // 取二级行业(最贴近"板块");不足则一级
+    }
+    if(ind){ cache[c6]={v:ind,t:Date.now()}; localStorage.setItem(INDCACHE_KEY,JSON.stringify(cache)); }
+    return ind || (hit?hit.v:'');                          // 解析空也回退旧缓存
   }catch(e){ return hit?hit.v:''; }   // 失败回退旧缓存
 }
 function highWarn(cl){
@@ -1161,6 +1169,13 @@ async function pickStocks(){
   const hotOK=!(hotMap&&hotMap._err);   // 热榜是否成功拉到(内网可能拦)
   // 取某候选的hotRank: 在榜=名次 / 榜外=0 / 热榜没拉到=undefined
   const getHot=(c)=> hotOK ? (hotMap[c]||0) : undefined;
+  // 行业(同花顺,与持仓页同口径):预取①候选行业 indMap ②大市值持仓行业 heldInds,用于买入前集中度预警
+  const indMap={};
+  await Promise.all(fb.map(async (x,i)=>{ indMap[i]=await fetchIndustry(String(x.c).padStart(6,'0')); }));
+  const heldIndByCode={};   // code6 -> 行业(仅大市值持仓)
+  await Promise.all([...heldBig].map(async c6=>{ const ind=await fetchIndustry(c6); if(ind) heldIndByCode[c6]=ind; }));
+  const heldInds=new Set(Object.values(heldIndByCode));   // 持仓行业集合
+  const heldNameOf=(ind)=>{ const c6=Object.keys(heldIndByCode).find(k=>heldIndByCode[k]===ind); const tr=c6&&TRADES.find(r=>r.code.slice(-6)===c6); return tr?tr.name:''; };
   const rankList=[];   // 收集综合评分,循环后做"今日推荐排序"
   // 计算今日首选 pickIdx:市值为主,但命中硬伤(高位/疑出货/封板极差)沉底,取最优者
   function candTier(i){
@@ -1248,11 +1263,19 @@ async function pickStocks(){
     rankList.push({name:x.n,code:c,score:sc.score,tags:sc.tags,isTop,cir:+cir,price:x.p/1e3,
                    hot:!!(hi&&hi.hot), dump, lateSeal, fbt:x.fbt, zb, hotRank});
     const scoreLine=`<div style="font-size:11px;margin-top:4px;color:${bg.col};font-weight:600">综合 ${bg.ic} ${sc.score>=0?'+':''}${sc.score}分·${bg.lb}${sc.tags.length?' <span style="font-weight:400;color:var(--sub)">'+sc.tags.join(' ')+'</span>':''}</div>`;
+    // 行业(同花顺,与持仓页同口径;拿不到回退东财hybk兜底)
+    const candInd=indMap[i]||x.hybk||'';
+    // 买入前集中度预警:候选行业命中现有大市值持仓行业(且自己未持仓)→ 软约束提示(第十四章:2-3只可接受,不硬放弃)
+    let concLine='';
+    if(candInd && !held && heldInds.has(candInd)){
+      const hn=heldNameOf(candInd);
+      concLine=`<div style="font-size:11px;color:var(--warn);margin-top:3px">⚠️ 与持仓${hn?`【${hn}】`:''}同属<b>${candInd}</b>,注意板块集中(软约束,2-3只可接受、非不能买)</div>`;
+    }
     html+=`<div class="card" style="${isTop?'border-color:var(--big)':''}">
       <div class="row1"><div><span style="font-size:13px">${star}</span><span class="nm">${x.n}</span><span class="cd">${c}</span> ${heldTag}${hiTag}</div>
         <div style="font-size:13px;color:var(--big);font-weight:600">${(x.p/1e3).toFixed(2)}元 · ${cir}亿</div></div>${scoreLine}
       <div class="row2"><span>封板 <b>${quality}</b> · 首封${fmtFbt(x.fbt)}</span>
-        <span>${x.hybk||''}</span></div>${hotLine}${hiLine}${patLine}${lhbLine}`;
+        <span>${candInd}</span></div>${hotLine}${hiLine}${patLine}${lhbLine}${concLine}`;
     if(isTop){
       const zt=(x.p/1e3);
       const hi9=(zt*1.09).toFixed(2);
