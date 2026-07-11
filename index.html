@@ -1068,21 +1068,21 @@ async function marketStrength(){
 function scoreOf(hi,lhb,zb){
   let s=0; const tags=[];
   // 龙虎榜(3年4290条回测:唯一真信号是"北向资金方向",机构/总净额是噪声)
-  //   北向净买>3千万 D10/D20/D30 全周期+2.5~3%;北向净卖<-3千万 全周期为负。
+  //   北向净买 D10+2.5% vs 平均+1.4%(超额~1个点,弱信号)→ +1
+  //   北向净卖 D10-1.4% vs 平均+1.4%(差~2.8点,但2026失效)→ -1
   if(lhb&&lhb.onList){
-    if(lhb.north<=-3e7){ s-=2; tags.push('北向净卖-2'); }        // 唯一稳的负信号
-    else if(lhb.north>=3e7){ s+=2; tags.push('北向净买+2'); }    // 唯一强的正信号
-    else if(lhb.net>0){ s+=0; }                                  // 机构/总净额=噪声,不加减
+    if(lhb.north<=-3e7){ s-=1; tags.push('北向净卖-1'); }
+    else if(lhb.north>=3e7){ s+=1; tags.push('北向净买+1'); }
   }
-  // 高位
+  // 高位:亏损档(均收-3%/胜率19% vs 非高位+7.9%,差~11点,最强负因子,有硬证据)→ -3
+  //   偏高(前20日30-50%):该档回测其实仍+7.7%还赚钱,不扣分,仅在候选卡提示
   if(hi){
     if(hi.hot){ s-=3; tags.push('⚠️高位-3'); }
-    else if(hi.warn){ s-=1; tags.push('偏高-1'); }
   }
-  // 封板质量
+  // 封板质量(0炸次日胜率35% vs 高振幅29%,差6pp,弱信号)→ ±1
   if(zb===0){ s+=1; tags.push('果断封板+1'); }
   else if(zb>=3){ s-=1; tags.push(zb+'炸-1'); }
-  // K线危险形态(仅扣分)
+  // K线危险形态(健康组+2.2% vs 危险组+1.1%,差1.1点,最弱信号,仅扣分)→ -1
   if(hi&&hi.pat&&hi.pat.cls==='bad'){ s-=1; tags.push('危险形态-1'); }
   return {score:s,tags};
 }
