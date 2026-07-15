@@ -909,9 +909,10 @@ async function fetchStockKline(code){
   const url=`https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},day,,,80,qfq`;
   try{ const r=await fetch(url); const d=await r.json(); const node=d.data[code]; const kl=node.qfqday||node.day||[]; return kl.map(x=>parseFloat(x[2])); }catch(e){ return []; }
 }
-// 获取同花顺人气榜Top100(热度因子,3年578笔回测:在榜+11% vs 榜外+1%,最强辅助因子)
+// 获取同花顺人气榜Top100(⚠️仅供中性展示,不参与选股/评分/排序)
+// 2026-07 Tushare权威重验+回归控制证明:热度是噪声甚至有害(在榜vs榜外仅差1.6点、相关+0.014,
+//   作买入过滤把+21万砸到+0.3万——误杀未上榜的未来大牛)。原"+11%最强辅助因子"是前视偏差假结论,已作废。
 // 接口CORS开放(Access-Control-Allow-Origin含本站),前端可直接fetch;只返回Top100。
-// 建议收盘后用(热度盘后稳定);盘中热度会变。
 let HOTMAP=null;   // {code6: rank} 当次拉取缓存
 async function fetchHotRank(){
   if(HOTMAP) return HOTMAP;
@@ -1091,10 +1092,9 @@ async function marketStrength(){
 // hotRank: >=1=在榜名次 / 0=热榜拉到了但此票不在Top100(榜外) / undefined=热榜没拉到(内网拦等)
 function scoreOf(hi,lhb,zb,hotRank){
   let s=0; const tags=[];
-  // 热度(3年578笔回测:同花顺人气榜在榜Top100 均+11% vs 榜外+1%,差~10点,最强辅助因子)
-  //   榜内各档不单调(样本少),只做两段:在榜+2 / 榜外-1。
-  if(hotRank>=1){ s+=2; tags.push('🔥热度#'+hotRank+' +2'); }
-  else if(hotRank===0){ s-=1; tags.push('热度榜外-1'); }
+  // ⚠️热度已证伪、退出评分(2026-07:Tushare权威重验+回归控制,热度是噪声甚至有害:
+  //   正确口径下在榜vs榜外仅差1.6点、相关+0.014,作买入过滤把+21万砸到+0.3万——它把
+  //   "还没上榜的未来大牛"(云南锗业+100%/长飞光纤+92%等25只)误杀。故不再加减分。hotRank仅供中性展示)
   // 龙虎榜(3年4290条回测:唯一真信号是"北向资金方向",机构/总净额是噪声)
   //   北向净买 D10+2.5% vs 平均+1.4%(超额~1个点,弱信号)→ +1
   //   北向净卖 D10-1.4% vs 平均+1.4%(差~2.8点,但2026失效)→ -1
@@ -1183,8 +1183,7 @@ async function pickStocks(){
     if(heldBig.has(c)) return 9;                          // 已持仓不选
     const hi=hiMap[i]; const lhb=lhbMap[i]; const zb=x.zbc||0;
     if(hi&&hi.hot) return 3;                              // 高位(回测亏损档)
-    // 热度榜外(不在Top100):回测榜外仅+1% vs 在榜+11%,沉底。仅热榜拉到时生效
-    if(hotOK && !hotMap[c]) return 2;
+    // ⚠️热度已证伪退出排序(2026-07):不再因"榜外"沉底——回测证明热度过滤会误杀未上榜的未来大牛
     if(lhb&&lhb.onList&&(lhb.north<=-3e7)) return 2; // 北向净卖(3年回测唯一稳的负信号)
     if(x.fbt>=143000&&zb>=2) return 1;                    // 封板极差(尾盘才封+多炸)
     return 0;                                             // 干净
@@ -1253,10 +1252,10 @@ async function pickStocks(){
     const hotRank=getHot(c);   // 在榜名次/0榜外/undefined没拉到
     const sc=scoreOf(hi,lhb,zb,hotRank);
     const bg=scoreBadge(sc.score);
-    // 热度行(3年578笔回测:在榜Top100 均+11% vs 榜外+1%,最强辅助因子)
+    // 热度行(⚠️中性展示,不参与评分/排序:2026-07权威重验证明热度是噪声/有害,原"+11%"是前视偏差假数字已删)
     let hotLine='';
-    if(hotRank>=1) hotLine=`<div style="font-size:11px;margin-top:3px;color:var(--up);font-weight:600">🔥同花顺热度 #${hotRank}(在榜Top100,回测均+11%)</div>`;
-    else if(hotRank===0) hotLine=`<div style="font-size:11px;margin-top:3px;color:var(--sub)">❄️热度榜外(不在Top100,回测仅+1%,建议顺延)</div>`;
+    if(hotRank>=1) hotLine=`<div style="font-size:11px;margin-top:3px;color:var(--sub)">🔥同花顺热度 #${hotRank}(仅参考,回测无预测力)</div>`;
+    else if(hotRank===0) hotLine=`<div style="font-size:11px;margin-top:3px;color:var(--sub)">热度榜外(仅参考,不影响选股)</div>`;
     // 负面因子(用于排序沉底):北向净卖 / 封板极差(尾盘才封+多次炸板)
     const dump = !!(lhb && lhb.onList && (lhb.north<=-3e7));
     const lateSeal = (x.fbt>=143000) && (zb>=2);   // 首封≥14:30 且 ≥2炸
@@ -1296,8 +1295,8 @@ async function pickStocks(){
   });
   // 今日推荐排序卡:市值为主(三年回测最强因子),但命中"明确负面因子"的票分级沉底,
   // 使排序=真实推荐序(首选=市值靠前且干净的票,不再让有硬伤的大市值票占第一)。
-  // 沉底档(tier越大越靠后):0=干净 / 1=封板极差 / 2=北向净卖或热度榜外 / 3=高位(回测亏损档)
-  function tierOf(r){ if(r.hot) return 3; if(r.dump||r.hotRank===0) return 2; if(r.lateSeal) return 1; return 0; }
+  // 沉底档(tier越大越靠后):0=干净 / 1=封板极差 / 2=北向净卖 / 3=高位(回测亏损档)。⚠️热度已退出排序(证伪)
+  function tierOf(r){ if(r.hot) return 3; if(r.dump) return 2; if(r.lateSeal) return 1; return 0; }
   const ranked=[...rankList].sort((a,b)=> (tierOf(a)-tierOf(b)) || (b.cir-a.cir));
   const top=ranked.slice(0,5);
   // 真正首选=候选卡里标⭐的那只(isTop=pickIdx,与排序同一分级逻辑)
@@ -1305,7 +1304,6 @@ async function pickStocks(){
   // 每票一句推荐/排除理由
   function reasonOf(r,isPick){
     if(r.hot) return {txt:'⚠️高位·回测亏损档,避开',col:'var(--crit)'};
-    if(r.hotRank===0) return {txt:'❄️热度榜外(不在Top100,回测仅+1%),让位',col:'var(--warn)'};
     if(r.dump) return {txt:'⚠️北向净卖,让位',col:'var(--crit)'};
     if(r.lateSeal) return {txt:`⚠️尾盘${fmtFbt(r.fbt)}才封+${r.zb}炸·资金犹豫,让位`,col:'var(--warn)'};
     if(isPick) return {txt:'✅市值靠前+封板果断+无硬伤,首选',col:'var(--up)'};
